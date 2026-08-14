@@ -10,8 +10,8 @@ moment they're saved — and automatically after two hours if nobody enters them
 Four parts, all in this repo: a tablet form, a clinic website and dashboard, an API, and
 the Chrome extension.
 
-- **[design.md](design.md)** — what it does and why it's built this way
-- **[setup.md](setup.md)** — getting it running on your machine
+- **[design.md](docs/design.md)** — what it does and why it's built this way
+- **[setup.md](docs/setup.md)** — getting it running on your machine
 
 ## Tech Stack
 
