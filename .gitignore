@@ -1,0 +1,12 @@
+# Node files
+node_modules/
+
+# Output
+dist/
+*.tsbuildinfo
+
+# Environment variables
+.env
+
+# Implementation plan files
+implementation.md
