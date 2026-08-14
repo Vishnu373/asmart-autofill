@@ -31,6 +31,7 @@ the Chrome extension.
 ## Project structure
 
 ```
+docs/          Contains architecture and setup commands
 packages/
   shared/      The 13 patient fields: types and validation, defined once
   api/         Node + Fastify API, Postgres, migrations
