@@ -68,7 +68,8 @@ This replaces that with a form on a tablet at the front desk. The patient fills 
 
 1. A clinic signs up on the website, with an email address and password or with Google.
 2. During signup they pick their EMR. OSCAR is the only working option; Custom is listed but shows "coming soon".
-3. The dashboard shows their clinic name, registered email, which EMR they're on, the link to open on their tablet, and which devices are linked (desktop and tablet). They can change their password here, unless they signed up with Google.
+3. The dashboard shows their clinic name, registered email, which EMR they're on, and which devices are linked (desktop and tablet). They can change their password here, unless they signed up with Google.
+   Creating a tablet link shows it once, on the spot, with a warning that it won't be shown again — only its hash is kept, so it cannot be recovered later. A clinic that loses a link creates a new one and unlinks the old tablet.
 4. All settings live on the website. The extension has no settings of its own — it reads whatever the clinic set up.
 
 ### Patient filling in the form
@@ -218,12 +219,16 @@ POST /api/login
 
 | Endpoint | What it does |
 |---|---|
-| `GET /api/dashboard` | Clinic name, email, EMR, the tablet link, and the list of linked devices. |
+| `GET /api/dashboard` | Clinic name, email, EMR, and the list of linked devices. Not the tablet link — see below. |
 | `POST /api/change_password` | Changes the password. Passes through to Supabase Auth. Not shown for Google accounts. |
-| `POST /api/link_device` | Creates a fresh tablet link. Used at setup, or to replace a revoked one. |
+| `POST /api/link_device` | Creates a fresh tablet link and returns it. Used at setup, or to replace a revoked one. |
 | `DELETE /api/devices/{device_id}` | Unlinks a device. If it's the tablet, that link stops working immediately. |
 
 Tablet links don't expire. If an iPad is lost, the clinic unlinks it from here and creates a new link..
+
+`POST /api/link_device` is the only place a link is ever visible. Only its hash is stored, so the dashboard
+lists the tablet as a linked device but cannot show its link again. Losing a link is recovered the same way
+as losing an iPad: create a new one, unlink the old.
 
 ### Patient submissions
 
