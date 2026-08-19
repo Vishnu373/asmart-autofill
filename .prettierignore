@@ -1,0 +1,7 @@
+node_modules/
+**/dist/
+**/target/
+src-tauri/gen/
+bun.lock
+design.md
+implementation.md

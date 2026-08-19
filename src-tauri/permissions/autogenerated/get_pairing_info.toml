@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-pairing-info"
+description = "Enables the get_pairing_info command without any pre-configured scope."
+commands.allow = ["get_pairing_info"]
+
+[[permission]]
+identifier = "deny-get-pairing-info"
+description = "Denies the get_pairing_info command without any pre-configured scope."
+commands.deny = ["get_pairing_info"]

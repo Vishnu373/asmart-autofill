@@ -7,17 +7,18 @@
 - [Functional Requirements](#functional-requirements)
 - [Non-Functional Requirements](#non-functional-requirements)
 - [Diagrams](#diagrams)
-- [API Design](#api-design)
-- [Data Model](#data-model)
+- [Local API](#local-api)
+- [Data](#data)
+- [Distribution](#distribution)
 - [Trade-offs](#trade-offs)
 - [Pricing](#pricing)
 - [Future Considerations](#future-considerations)
 
 ## Overview
 
-Patients sees multiple columns to be filled out for registration which is confusing to them. After that, the staff verifies it and adds to the EMR demography.
+Patients see multiple columns to be filled out for registration, which is confusing to them. After that, the staff verifies it and adds it to the EMR demographic.
 
-This replaces that with a form on a tablet at the front desk. The patient fills in a simplified form (13 fields) and submits. The details show up in a Chrome extension on the staff member's computer. The staff member opens a new patient record in EMR, clicks once to fill it in, checks it over, and saves.
+This replaces that with a form on a tablet at the front desk. The patient fills in a simplified form (13 fields) and submits. The details land on the front desk computer, where the staff member opens a new patient record in OSCAR, clicks once to fill it in, checks it over, and saves.
 
 **Goals**
 
@@ -26,152 +27,149 @@ This replaces that with a form on a tablet at the front desk. The patient fills 
 
 **Not in v1**
 
-- Returning patients — this is for new registrations only.
 - Any EMR other than OSCAR.
 
-**Who it's for:** clinics. They sign up, and their front desk staff use it daily.
+**Who it's for:** clinics. They install it on the front desk computer and use it daily.
+
+### No server
+
+The tablet and the computer are ten metres apart on the same WiFi. Patient details never need to leave the building, so nothing here goes to the internet.
+
+A desktop application on the front desk computer is the whole product and the source of truth. It serves the form to the tablet, receives the submission, holds it, and hands it to the browser extension that fills OSCAR. There is no cloud service, no database, and no account to sign into.
+
+The application exists because neither a browser tab nor a Chrome extension can accept an incoming connection — both can only make outgoing ones. For the tablet to send anything to the computer, something on that computer has to be listening at an address. That is the application's job.
+
+The only things that reach the internet are the update feed and error reporting.
 
 ## Tech Stack
 
 | Part | Choice |
 |---|---|
-| Patient form, website, dashboard | React + TypeScript |
-| API | Node + TypeScript |
-| Database | Postgres, on the same server |
-| Sign-in | Supabase Auth, hosted — email/password and Google |
-| Extension | TypeScript, Manifest V3 |
-| Push | Server-Sent Events |
-| Hosting | OVH VPS, (Canada - East - Beauharnois) |
-| Containers | Docker Compose |
-| In front/web server | Caddy |
-
+| Desktop application | Tauri |
+| Backend / Application core | Rust — the HTTP server and the in-memory queue |
+| Frontend / Patient form, tray window | React + TypeScript |
+| Chrome Extension | TypeScript, Manifest V3 |
+| Storage | None — submissions are held in memory |
+| Transport | HTTP over the clinic LAN |
+| Updates | Tauri's updater |
 
 ## Functional Requirements
 
 ### The fields collected
 
 - First name
-- last name
-- preferred name
-- address
-- city
-- province
-- postal
-- phone number
-- email
-- date of birth
-- health insurance number
-- health insurance version
-- HC type.
+- Last name
+- Preferred name
+- Address
+- City
+- Province
+- Postal code
+- Phone number
+- Email
+- Date of birth
+- Health insurance number
+- Health insurance version
+- HC type
 
-### Clinic setup
+### Setting up
 
-1. A clinic signs up on the website, with an email address and password or with Google.
-2. During signup they pick their EMR. OSCAR is the only working option; Custom is listed but shows "coming soon".
-3. The dashboard shows their clinic name, registered email, which EMR they're on, and which devices are linked (desktop and tablet). They can change their password here, unless they signed up with Google.
-   Creating a tablet link shows it once, on the spot, with a warning that it won't be shown again — only its hash is kept, so it cannot be recovered later. A clinic that loses a link creates a new one and unlinks the old tablet.
-4. All settings live on the website. The extension has no settings of its own — it reads whatever the clinic set up.
+1. The clinic installs the application on the front desk computer. It starts with Windows and sits in the system tray.
+2. On start, it picks up the computer's address on the clinic WiFi and listens there.
+3. The tray window shows a QR code containing that address and a pairing token. Staff scan it once on the tablet, which opens the form.
+4. If the computer's address changes — a reboot, a new lease — the QR shows the new one. Staff rescan. Nothing else is configured.
+5. The extension is installed in Chrome on the same computer. It has no settings; everything it needs it asks the application for.
 
 ### Patient filling in the form
 
-5. The patient opens the clinic's link on the tablet and fills in the fields.
-6. The form checks the details look valid before it will submit.
-7. On submit, the details are sent to the server and saved as waiting to be entered.
-8. The tablet clears itself and shows a blank form for the next patient.
-9. Pressing submit twice doesn't create two entries.
+6. The patient opens the form on the tablet and fills in the fields.
+7. The form checks the details look valid before it will submit.
+8. On submit, the details are sent to the application and held as waiting to be entered.
+9. The tablet clears itself and shows a blank form for the next patient.
+10. Pressing submit twice doesn't create two entries.
+11. If the application isn't running or the computer is asleep, the tablet says the front desk isn't reachable rather than failing silently.
 
 ### Staff entering it into OSCAR
 
-10. The staff member signs into the extension with the same clinic login.
-11. The extension lists the patients waiting to be entered, newest first.
-12. The staff member opens a new patient record in OSCAR and picks the patient from the list.
-13. Clicking fill puts the details into the OSCAR fields and highlights what it filled.
-14. If the record already has details in it, it refuses to fill and says so.
-15. If any field couldn't be filled, it says which ones rather than failing quietly.
-16. The staff member checks everything, corrects anything wrong directly in OSCAR, and saves.
+12. The extension shows the patients waiting to be entered, newest first.
+13. The staff member opens a new patient record in OSCAR and picks the patient from the list.
+14. Clicking fill puts the details into the OSCAR fields and highlights what it filled.
+15. If the record already has details in it, it refuses to fill and says so.
+16. If any field couldn't be filled, it says which ones rather than failing quietly.
+17. The staff member checks everything, corrects anything wrong directly in OSCAR, and saves.
 
 ### After it's entered
 
-17. When the staff member saves in OSCAR, the patient's details are deleted from the server.
-18. Anything not entered within 2 hours is cleaned up automatically and its details erased.
+18. When the staff member saves in OSCAR, the extension tells the application, which drops the submission from memory.
+19. Anything not entered within 2 hours is dropped automatically.
+20. Closing the application, or restarting the computer, drops everything waiting.
 
 ## Non-Functional Requirements
 
 | What | Target |
 |---|---|
-| Clinics signed up | 100 |
-| Clinics using it at the same time | 10–15 |
+| Tablets per clinic | 1 |
 | Registrations per clinic per day | 40–50 |
-| Registrations at the same time (concurrent) | 15–25 |
-| Submissions per day, all clinics | ~4,000–5,000 |
-| Writes per second | Under 1 |
-| Any API request | Under 200ms |
-| Patient submits → shows in extension | Under 200ms |
-| Open push connections at once | 10–15 |
+| Submissions waiting at once | 1 |
+| Patient submits → appears in the extension | Under 1 second |
+| Any local request | Under 50ms |
 
+Everything here happens on one machine over a local network, so the numbers are not a constraint on the design. A hundred clinics is a hundred independent copies that never meet.
 
-### Push, not polling
+### Getting new submissions to the extension
 
-When a patient submits, the server saves the record and immediately pushes it to the clinic's desktop. The connection is held open by the extension's code running inside the OSCAR tab, because Chrome shuts an extension's background down after about 30 seconds idle and it can't hold a connection there.
-
-If that connection drops it reconnects on its own. If it can't, the extension falls back to checking every few seconds, so a patient is never stuck waiting to appear.
+The extension asks the application for the waiting list once a second. On localhost that costs nothing, and it removes every failure mode a pushed connection has — no reconnection logic, no connection held open in a tab, no fallback path.
 
 ## Diagrams
 
 ### The whole thing
 
-Four parts. The tablet and the staff desktop never talk to each other directly — everything
-goes through the server.
+Three parts, all inside the clinic.
 
 ```mermaid
 flowchart LR
-    T["Tablet at front desk<br/>(enrollment form)"]
-    S["Server in Canada<br/>website + API + database"]
-    E["Chrome extension<br/>on staff desktop"]
+    T["Tablet at front desk<br/>(browser, nothing installed)"]
+    A["Desktop application<br/>front desk computer"]
+    E["Chrome extension<br/>same computer"]
     O["OSCAR<br/>new patient record"]
 
-    T -->|"sends the details"| S
-    S -->|"pushes the new patient"| E
+    T -->|"clinic WiFi"| A
+    A -->|"localhost"| E
     E -->|"fills the fields"| O
-    E -->|"tells the server it's done"| S
 ```
 
 ### A patient submits
-
-From pressing Submit to the badge showing up on the staff member's extension. The whole
-path is under 200ms.
 
 ```mermaid
 sequenceDiagram
     participant P as Patient
     participant T as Tablet
-    participant S as Server
+    participant A as Application
     participant E as Extension
 
     P->>T: Fills in the fields
     P->>T: Presses Submit
     T->>T: Checks the details look valid
-    T->>S: Sends the details
-    S->>S: Saves as waiting to be entered
-    S-->>E: Pushes it straight to the desktop
-    E->>E: Shows a badge
-    S-->>T: Confirms it was saved
+    T->>A: Sends the details over the LAN
+    A->>A: Holds it in memory
+    A-->>T: Confirms it was received
     T->>P: Clears to a blank form
+    E->>A: Asks for the waiting list
+    A-->>E: Returns it
+    E->>E: Shows a badge
 ```
 
 ### Staff enters it into OSCAR
-
-From picking a patient to the details being erased from the server.
 
 ```mermaid
 sequenceDiagram
     participant St as Staff
     participant E as Extension
     participant O as OSCAR
-    participant S as Server
+    participant A as Application
 
     St->>O: Opens a new patient record
-    St->>E: Opens the extension and picks the patient
+    St->>E: Picks the patient
+    E->>A: Asks for the details and the field mapping
     E->>O: Checks the fields are empty
 
     alt Record already has details in it
@@ -181,78 +179,28 @@ sequenceDiagram
         E->>St: Reports any field it couldn't fill
         St->>O: Checks it over, fixes anything, saves
         O-->>E: Save detected
-        E->>S: Tells the server it's done
-        S->>S: Marks it DONE and erases the details
+        E->>A: Tells the application it's done
+        A->>A: Drops it from memory
     end
 ```
 
-## API Design
+## Local API
 
-Both the website and the extension use the same API and the same login.
+Everything the application serves. It listens on one port on two addresses: the LAN address for the tablet, and localhost for the extension.
 
-### Signing in
-
-Sign-in is handled by Supabase Auth, with email and password or Google. The API never sees
-a password — it receives the token Supabase issued and checks it.
+### For the tablet
 
 | Endpoint | What it does |
 |---|---|
-| `POST /api/signup` | After Supabase creates the account, this creates the clinic row — clinic name, EMR — and stores the Supabase user id against it. |
-| `POST /api/login` | Takes the Supabase token, returns the clinic's details, and registers the device. |
-| `POST /api/logout` | Logout from that device. |
+| `GET /api/link` | The form. Requires the pairing token from the QR code. |
+| `POST /api/submissions` | The patient's submitted details. |
+| `GET /api/health` | Lets the tablet tell "front desk is asleep" from "form is broken". |
 
-The extension doesn't sign in by itself. Clicking sign in opens the website, staff sign in
-there, and the token comes back to the extension — one sign-in flow instead of two, and
-Google's flow only has to work in one place.
-
-Signing in from the extension also registers that desktop as a linked device, so it shows up in the dashboard alongside the tablet.
+The details are sent in the request body, never in the address bar. Requests without a valid pairing token are refused, so a stranger who guesses the address gets nothing.
 
 ```
-POST /api/login
-{ "token": "<supabase token>", "device_id": "b71c", "kind": "desktop" }
-
-200 OK
-{ "clinic_name": "Bloor Medical", "emr": "oscar" }
-```
-
-### The clinic's dashboard
-
-| Endpoint | What it does |
-|---|---|
-| `GET /api/dashboard` | Clinic name, email, EMR, and the list of linked devices. Not the tablet link — see below. |
-| `POST /api/change_password` | Changes the password. Passes through to Supabase Auth. Not shown for Google accounts. |
-| `POST /api/link_device` | Creates a fresh tablet link and returns it. Used at setup, or to replace a revoked one. |
-| `DELETE /api/devices/{device_id}` | Unlinks a device. If it's the tablet, that link stops working immediately. |
-
-Tablet links don't expire. If an iPad is lost, the clinic unlinks it from here and creates a new link..
-
-`POST /api/link_device` is the only place a link is ever visible. Only its hash is stored, so the dashboard
-lists the tablet as a linked device but cannot show its link again. Losing a link is recovered the same way
-as losing an iPad: create a new one, unlink the old.
-
-### Patient submissions
-
-| Endpoint | What it does |
-|---|---|
-| `GET /api/submissions` | The list of patients waiting. Names and times only. |
-| `GET /api/submissions/{submission_id}` | The full details for one patient, for filling in. |
-| `POST /api/submissions/{submission_id}/filled` | Staff saved it in OSCAR. Marks it DONE and erases the details. |
-| `GET /api/submission_live` | The connection held open in the OSCAR tab. New patients are pushed down it. |
-
-
-```
-GET /api/submissions
-
-200 OK
-[ { "id": "a3f9", "name": "Jane Doe", "submitted_at": "2026-08-13T14:12:04Z" } ]
-```
-
-```
-GET /api/submissions/a3f9
-
-200 OK
+POST /api/submissions
 {
-  "id": "a3f9",
   "first_name": "Jane", "last_name": "Doe", "preferred_name": "Janie",
   "address": "12 King St W", "city": "Toronto",
   "province": "ON", "postal_code": "M5H 1A1",
@@ -262,33 +210,28 @@ GET /api/submissions/a3f9
   "health_insurance_version": "AB",
   "hc_type": "ON"
 }
+
+201 Created
+{ "id": "a3f9" }
 ```
 
-### The tablet
+### For the extension
 
 | Endpoint | What it does |
 |---|---|
-| `GET /api/submission_form` | Serves the enrollment form. Opened using the clinic's tablet link. |
-| `POST /api/submissions` | The patient's submitted details. |
+| `GET /api/pending` | The list of patients waiting. Names and times only. |
+| `GET /api/pending/{id}` | The full details for one patient, for filling in. |
+| `POST /api/pending/{id}/filled` | Staff saved it in OSCAR. Drops it from memory. |
+| `GET /api/mapping` | Which OSCAR field each value goes into. |
 
-The details are sent in the request body, never in the address bar. Submissions are rate limited so a leaked link can't be used to flood a clinic's list with junk.
-
-### Statuses
-
-| Status | Means | Patient details kept? |
-|---|---|---|
-| `PENDING` | Submitted, not yet entered into OSCAR | Yes |
-| `DONE` | Entered into OSCAR and saved | No — erased |
-| `DELETED` | Nobody entered it and the cleanup ran | No — erased |
-
-Rows are never thrown away. Once a form is DONE or DELETED, the patient's details are erased and the row keeps only its timings:
+These are served on localhost only, and the application checks the request came from the extension's own origin so another page on the machine can't read the queue.
 
 ```
-id: a3f9   clinic: Bloor Medical   status: DONE
-submitted: 2:12pm   entered: 2:14pm
-```
+GET /api/pending
 
-That leaves a permanent record of how many patients a clinic registered and when, with no patient data in it.
+200 OK
+[ { "id": "a3f9", "name": "Jane Doe", "submitted_at": "2026-08-13T14:12:04Z" } ]
+```
 
 ### Responses
 
@@ -296,91 +239,26 @@ That leaves a permanent record of how many patients a clinic registered and when
 |---|---|
 | `200` / `201` | Success. |
 | `400` | Details failed validation. |
-| `401` | Wrong password, or an expired or missing token. |
-| `403` | Trying to reach another clinic's data. |
-| `404` | No such submission or device. |
-| `409` | That submission was already entered or cleaned up. |
+| `401` | Missing or wrong pairing token. |
+| `404` | No such submission — already entered, or expired. |
+| `409` | That submission was already marked entered. |
 | `429` | Too many submissions too quickly. |
 
-## Data Model
+## Data
 
-One Postgres database on the same server as everything else. Three tables. Whether a device is allowed is decided by whether its row in `devices` still exists.
+Nothing is written to disk. A submission is a record in memory that lives from the moment the patient presses submit to the moment staff saves in OSCAR — usually a minute or two.
 
-### clinics
+| Field | Notes |
+|---|---|
+| `id` | Generated on receipt. |
+| `details` | The 13 fields. |
+| `submitted_at` | When the patient pressed Submit. |
 
-One row per clinic.
+It leaves memory when staff marks it filled, when two hours pass, or when the application stops. There is no database to back up, no history to protect, and no copy of a health card number anywhere on disk.
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | Primary key. |
-| `name` | text | Clinic name, shown in the dashboard. |
-| `email` | text | Unique. Shown in the dashboard. |
-| `auth_user_id` | text | The user id from Supabase Auth. How a login maps to a clinic. |
-| `emr` | text | `oscar` for now. Chosen at signup. |
-| `created_at` | timestamptz | |
+### The OSCAR field mapping
 
-### devices
-
-Every linked desktop and tablet.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | Primary key. |
-| `clinic_id` | uuid | The clinic it belongs to. |
-| `kind` | text | `desktop` or `tablet`. |
-| `device_label` | text | e.g. "Front desk iPad". |
-| `token_hash` | text | For tablets, the hash of the secret in their link. |
-| `linked_at` | timestamptz | |
-| `last_seen_at` | timestamptz | Shown in the dashboard. |
-
-Only the hash of a tablet's secret is stored, so a copy of the database doesn't hand over working tablet links. Unlinking deletes the row and the link stops working immediately.
-
-Desktops get a row when someone signs into the extension there. The extension generates its own device id once and keeps it, so signing out and back in reuses the same row rather than adding another "Front desk PC" to the list every time.
-
-Every request from the extension carries its device id. If the row is gone, the request is refused — that's what makes unlinking take effect immediately.
-
-### submissions
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | Primary key. |
-| `clinic_id` | uuid | Every lookup is filtered by this. |
-| `status` | text | `PENDING`, `DONE`, or `DELETED`. |
-| `details` | jsonb | The patient's details. Emptied once entered. |
-| `submitted_at` | timestamptz | When the patient pressed Submit. |
-| `entered_at` | timestamptz | When staff saved it in OSCAR. |
-
-The details are kept as JSON because nothing ever searches inside them — a row is written
-whole and read whole:
-
-```json
-{
-  "first_name": "Jane", "last_name": "Doe", "preferred_name": "Janie",
-  "address": "12 King St W", "city": "Toronto",
-  "province": "ON", "postal_code": "M5H 1A1",
-  "phone": "4165551234", "email": "jane@example.com",
-  "date_of_birth": "1985-04-17",
-  "health_insurance_number": "1234567890",
-  "health_insurance_version": "AB",
-  "hc_type": "ON"
-}
-```
-
-When a submission becomes `DONE` or `DELETED`, `details` is emptied. The row keeps its id, clinic, status, and timings forever.
-
-### Indexes
-
-| Table | Index | For |
-|---|---|---|
-| clinics | `email` unique | Signing in. |
-| devices | `clinic_id` | Listing devices in the dashboard. |
-| submissions | `(clinic_id, status)` | The waiting list. |
-| submissions | `(status, submitted_at)` | The cleanup. |
-
-
-### The OSCAR field mapping is not in the database
-
-Which OSCAR box each field goes into lives in a JSON file on the server, which the extension downloads when it signs in and keeps a copy of:
+Which OSCAR box each field goes into lives in a JSON file next to the application, which the extension fetches when it fills:
 
 ```json
 {
@@ -397,94 +275,115 @@ Which OSCAR box each field goes into lives in a JSON file on the server, which t
 }
 ```
 
-It's the same for every OSCAR clinic, so it doesn't belong in the database.
-Keeping it on the server means a broken mapping is fixed in minutes instead of waiting days for a Chrome
-Web Store review, and adding another EMR later is another file rather than a code change.
-
-### Backups
-
-Backed up nightly: clinics, devices, and the submissions rows **without the details column**. Restoring gives back every clinic account, every linked device, and the full history of how many patients were registered and when.
-
-Patient details are never backed up. They live about 90 seconds and are the one thing here worth protecting, so keeping copies of them would undo the rest of this design.
+It sits with the application rather than inside the extension on purpose. The application updates itself in minutes; a Chrome extension waits days for Web Store review. Keeping the mapping on the application side means a broken selector — the most likely thing to break in this whole system, since OSCAR changes and nobody tells you — is fixed on your schedule. It also keeps the extension a thin pipe that rarely needs republishing, and makes another EMR another file rather than a code change.
 
 ## Trade-offs
 
-### 1. Everything on one server
+### 1. A desktop application rather than a cloud service
 
-**Chosen:** one VPS running the website, the API, and Postgres together.
+Patient details never leave the clinic, which removes the data residency question, the breach surface, and the processor agreements that come with holding health data on someone else's machine. 
 
-The alternative is a managed database and managed hosting, which costs more and means two things to configure instead of one. 
+**The cost:** is that you have software installed on a hundred different Windows machines instead of one server you control, and you are blind to what happens on them beyond what error reporting tells you.
 
-**When this changes:** at around 10,000 clinics, Postgres moves to its own server and the VPS keeps the website and API.
+### 2. Held in memory rather than a database
 
-### 2. Relational database rather than a non-relational database
+The data lives about ninety seconds. A database would mean health card numbers on disk, a file to back up, and a file to protect, all to survive a crash during a window where the patient is still standing at the desk and can be asked again.
 
-**Chosen:** Relational database (Postgres)
+**The cost:** restart the computer with three patients waiting and those three fill the form again.
 
-- ACID property
-- Deleting a clinic automatically removes its devices and submissions.
-- Two signups with the same email can't both succeed.
-- Marking a submission entered and erasing its details happen together or not at all.
+### 3. Polling rather than pushing
 
-Postgres stores JSON fine, so the patient details sit in a JSON column exactly as they would in a document database. It isn't a choice between the two — one thing does both.
+**Chosen:** the extension asks once a second.
 
+Over localhost this is free, and it deletes the reconnection logic, the connection held open in the OSCAR tab, and the fallback path that a pushed connection needs. The delay is under a second, which nobody notices.
 
-### 3. Pushing rather than checking every few seconds
+### 4. The mapping lives with the application, not the extension
 
-**Chosen:** the server pushes a new patient to the desktop the moment they submit.
+**Chosen:** the extension fetches the OSCAR selectors from the application at fill time.
 
-Checking every few seconds is simpler — around 30 lines with nothing to go wrong — but it means a patient can sit unnoticed for a few seconds. Pushing is more to build: the connection can drop and has to reconnect on its own.
+The application updates on your schedule; the extension waits on Chrome's review queue. Putting the part most likely to break on the side you can fix quickly is the difference between a broken clinic waiting minutes and waiting a week.
 
-The reason for pushing: staff should open the extension and find the patient already there, never wait for it to show up. If the connection drops, the extension falls back to checking every few seconds so nothing is ever missed.
+### 5. HTTP for now
 
-### 4. The connection is held in the OSCAR tab
+**Chosen:** the tablet talks to the application unencrypted.
 
-**Chosen:** the extension's code inside the OSCAR tab holds the open connection.
+WiFi already encrypts traffic between a device and the router, and this is a closed clinic network. The residual risk is a device already on that network reading a submission in flight. Nothing is built for this in v1; see Future Considerations.
 
-Not a preference — Chrome shuts an extension's background down after about 30 seconds idle, so it can't hold a connection there. An open tab isn't shut down, and staff have OSCAR open all day anyway.
+**When this changes:** before selling to any clinic that asks how the data is protected in transit, which will happen.
 
-The code in that tab belongs to the extension, not to OSCAR. Nothing is written into OSCAR until staff clicks fill.
+### 6. Rust in the core, React everywhere else
 
-**The one gap:** if Chrome discards the tab to free memory, the connection goes with it. It reconnects when the tab wakes up.
+**Chosen:** Tauri, with the HTTP server and queue in Rust and everything visible in React.
 
-### 5. Details are erased once entered
+The application has to accept an incoming connection, and no webview can. Something native has to hold the port, and in Tauri that something is Rust — there is no alternative inside the framework.
 
-**Chosen:** when staff saves in OSCAR, the patient's details are erased and the row keeps only its timings.
+The alternative was bundling a Node runtime as a sidecar to keep the whole project in TypeScript. That costs about 50MB of install, a second process to supervise, and gives up the reason to use Tauri at all.
 
-Keeping them would mean health card numbers sitting in the database indefinitely for no reason — the details are already in OSCAR, which is where they belong. Erasing them means the database holds a few dozen patient records at any moment instead of years' worth.
+**Why the cost is acceptable:** the Rust is one file that stops changing once the routes work. The parts that change often — the form, the tray window, the field mapping, the extension — are all TypeScript or JSON.
 
-The timings stay, so a clinic can still see how many patients they registered and when.
+### 7. QR code for discovery
 
-### 6. The OSCAR mapping lives on the server
+**Chosen:** the application shows a QR with its current address, staff scan it on the tablet.
 
-**Chosen:** a JSON file on the server, downloaded by the extension when it signs in.
-
-If it were built into the extension, fixing a broken mapping would mean publishing an update and waiting days for Chrome to review it, with every clinic broken in the meantime. On the server it's fixed in minutes.
-
-The cost is about 20 extra lines to download it and keep a copy for when the download fails, and the risk that a bad file breaks every clinic at once — which is also fixed in minutes. The file carries a version number so it's clear which one a clinic is running.
+The alternatives are a fixed address on the computer, which makes the clinic's network someone's problem, or announcing itself over the network, which some networks block. A QR works everywhere and needs nobody to understand what an IP address is. The cost is a rescan on the rare occasions the address changes.
 
 ## Pricing
 
-Figures are estimates in Canadian dollars and should be checked against current OVH pricing
-before committing.
-
-### Running it at 100 clinics
-
-| What | Cost per month |
+| What | Cost |
 |---|---|
-| OVH VPS, entry tier | ~$8 |
-| Backup storage | ~$1 |
-| **Total** | **~$9/month** |
-
-One-off: a domain name at roughly $20 a year, and a one-time $7 fee to publish on the Chrome Web Store.
+| Servers | $0 |
+| Database | $0 |
+| EV code signing certificate | ~$300–500/year |
+| Chrome Web Store, one-time | $7 |
+| Domain, for the update feed and site | ~$20/year |
+| Static hosting for the update feed | ~$0 |
 
 ## Future Considerations
 
-### 1. Custom mapping
+### 1. Encrypted transfer between tablet and desktop
 
-The enrollment form stays exactly as it is. What changes is that the clinic can say where each field should land in their own EMR, instead of waiting for a mapping to be written for them.
-This is the "Custom" option shown at signup. It's what makes the product work with an EMR that hasn't been seen before, without a code change or a release.
+The open item from v1. Three ways, in order of how much they cost to build:
 
-### 2. Scale 10,000 users/clinics
+- **HTTPS with a certificate the application generates itself.** Real encryption. The tablet shows a "connection is not private" warning that staff accept once during setup, because the certificate isn't from an authority the tablet recognises.
+- **Encrypt the fields inside the form** using a key carried in the pairing QR. No warning on the tablet, about thirty lines using the browser's own crypto. Protects against a device snooping on the network, but not one actively tampering with it, since the form itself still arrives unencrypted.
+- **A trusted certificate for a local address**, which is possible but involves owning a domain and renewing certificates for machines that may be offline.
 
-Postgres moves off the VPS onto a dedicated database server, likely Supabase. The website and API stay in VPS.
+The first is what comparable local-transfer tools do and is the likely answer.
+
+### 2. Custom mapping
+
+The form stays exactly as it is. What changes is that the clinic can say where each field should land in their own EMR, instead of waiting for a mapping to be written for them. This is what makes the product work with an EMR that hasn't been seen before, without a code change or a release.
+
+### 3. macOS
+
+Windows first. macOS needs an Apple developer account, notarization, and its own testing pass.
+
+### 4. A native tablet app instead of the browser
+
+**What this would replace:** the QR code, and the desktop having to work out its own address.
+
+A machine does not have one IP address — it has one per network interface. A typical Windows PC carries loopback, the real WiFi adapter, several virtual copies of the WiFi card that Windows creates for hotspot and casting, and often a VPN adapter. Only one of those is reachable from a tablet on the clinic WiFi. Today the desktop picks it by scoring adapters (`net.rs`): not loopback, not a `169.254` placeholder, has a gateway, prefer wireless. That is the standard heuristic and it is right on an ordinary clinic PC, but it is still an inference — a VPN holding the default route is the case most likely to defeat it.
+
+**How local-transfer applications normally avoid the question.** LocalSend, KDE Connect, Syncthing and similar tools do not guess. One side broadcasts a small packet to the local network — "I am here, this is my name and port" — and the other side hears it. The packet arrives carrying its own return address, and that address is proven reachable by the fact that the packet arrived at all. No scoring, no heuristic. mDNS/Bonjour is the same idea with a name attached, which is how printers and Chromecast are found.
+
+**Why v1 cannot use it.** Discovery needs software on both ends. The tablet runs a plain browser, and a browser cannot listen for broadcasts — it can only open a URL it has been handed. So the address must be decided before anything reaches the tablet, with no help from the tablet. This is a direct consequence of the browser-based design, not an oversight.
+
+**What a native app changes.** With an app on the tablet, the desktop stops advertising an address and starts announcing itself. The tablet finds it, and the address problem disappears rather than being solved. It also brings offline capture, a stored pairing instead of a bookmarked URL, and a real place to put encryption without the certificate warning described in item 1.
+
+**What it costs.** An Android and an iOS build, two store accounts and two review processes, a release cycle that no longer moves at the speed of the desktop application, and a pairing flow that has to be designed rather than inherited from a URL. It also gives up the single largest advantage of the current design: a tablet needs nothing installed, so any device with a camera and a browser works, including a personal phone.
+
+**When to revisit.** If address detection causes trouble on real installs, or if a clinic asks for offline capture. Until then the QR is the cheaper answer. A smaller step in the same direction is listing every candidate address in the tray window so staff can switch when the automatic choice is wrong — that covers the same failure without a mobile app.
+
+### 5. Log retention by importance, not by age
+
+**Where this stands today.** Logging rolls to a new file each day and keeps every one of them. Nothing prunes. A machine that has run for a year holds a year of files, the oldest still describing what happened on day one.
+
+**The obvious fix, and why it is not the one wanted.** `tracing-appender` takes a `max_log_files` cap: on each rotation the oldest file is deleted. One argument, no moving parts. But it discards by age alone, so a genuine startup failure from three weeks ago is thrown away at exactly the same moment as three weeks of routine "listening on 0.0.0.0" lines. The information worth keeping is the rarest, and an age cap is blind to that.
+
+**The intended approach.** A scheduled cleanup that prunes by importance instead: drop the routine entries once they are past their useful window, keep errors, warnings, startup failures, and address changes for much longer. Recent days stay complete for debugging a complaint from last week; older days shrink to only the lines that would ever be read again.
+
+**What it costs.** More machinery than a cap. Something has to run on a schedule, parse each line to classify it, and rewrite files that the running application may hold open — which is the part that needs care on Windows, where an open file cannot always be replaced. Deciding which levels survive is a policy that has to be written down, and getting it wrong deletes the evidence for a bug rather than the noise around it.
+
+**Why it matters beyond disk space.** The volume is small — kilobytes a day. The reason to prune is that after B6 the log records that a submission arrived, and at what time. Even with no patient data in the line, keeping an indefinite record of clinic activity is a retention decision, and it should be a deliberate one.
+
+**When to revisit.** Before the first real install, since an unpruned log starts accumulating from the moment the application ships. If the cleanup job is not ready by then, apply the age cap as a stopgap and replace it later — an imperfect prune is better than none.
