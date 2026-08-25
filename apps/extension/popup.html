@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Waiting patients</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: system-ui, sans-serif;
+      }
+
+      body {
+        width: 300px;
+        margin: 0;
+        padding: 8px;
+        color: #1b1b1f;
+        background: #fff;
+      }
+
+      ul.waiting {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      button.patient {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+        width: 100%;
+        padding: 10px 12px;
+        border: 0;
+        border-radius: 6px;
+        font: inherit;
+        text-align: left;
+        color: inherit;
+        background: none;
+        cursor: pointer;
+      }
+
+      button.patient:enabled:hover,
+      button.patient:enabled:focus-visible {
+        background: #eceef4;
+      }
+
+      button.patient:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+
+      .name {
+        font-weight: 600;
+      }
+
+      .time {
+        color: #5b5f6b;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      .empty,
+      .down,
+      .note {
+        padding: 12px;
+        color: #5b5f6b;
+      }
+
+      .empty p,
+      .down p {
+        margin: 0 0 4px;
+      }
+
+      .down p:first-child {
+        color: #b3261e;
+        font-weight: 600;
+      }
+
+      .note {
+        margin: 0;
+      }
+
+      .note.problem {
+        color: #b3261e;
+      }
+
+      .note.done {
+        color: #1a7f37;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/popup/main.ts"></script>
+  </body>
+</html>

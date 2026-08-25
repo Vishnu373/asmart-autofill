@@ -9,6 +9,7 @@
 - [Diagrams](#diagrams)
 - [Local API](#local-api)
 - [Data](#data)
+- [Observability](#observability)
 - [Distribution](#distribution)
 - [Trade-offs](#trade-offs)
 - [Pricing](#pricing)
@@ -192,7 +193,7 @@ Everything the application serves. It listens on one port on two addresses: the 
 
 | Endpoint | What it does |
 |---|---|
-| `GET /api/link` | The form. Requires the pairing token from the QR code. |
+| `GET /` | The form. Requires the pairing token from the QR code. |
 | `POST /api/submissions` | The patient's submitted details. |
 | `GET /api/health` | Lets the tablet tell "front desk is asleep" from "form is broken". |
 
@@ -224,7 +225,7 @@ POST /api/submissions
 | `POST /api/pending/{id}/filled` | Staff saved it in OSCAR. Drops it from memory. |
 | `GET /api/mapping` | Which OSCAR field each value goes into. |
 
-These are served on localhost only, and the application checks the request came from the extension's own origin so another page on the machine can't read the queue.
+These are served on localhost only, and any request carrying a web page's origin is refused, so a page open in a browser on this machine can't read the queue. That is the whole of the check. A request carrying no origin at all is allowed, because that is what the extension's own requests look like — and so is any other extension's. See [Trade-offs 8](#8-the-extension-is-not-identified).
 
 ```
 GET /api/pending
@@ -277,6 +278,30 @@ Which OSCAR box each field goes into lives in a JSON file next to the applicatio
 
 It sits with the application rather than inside the extension on purpose. The application updates itself in minutes; a Chrome extension waits days for Web Store review. Keeping the mapping on the application side means a broken selector — the most likely thing to break in this whole system, since OSCAR changes and nobody tells you — is fixed on your schedule. It also keeps the extension a thin pipe that rarely needs republishing, and makes another EMR another file rather than a code change.
 
+## Observability
+
+A daily rolling file at `%LOCALAPPDATA%\com.asmart.autofill\logs\app.log`, `info` by default, `RUST_LOG` to raise it.
+
+One line per event, not per request. The extension asks for pending work once a second, so request logging would bury these seven lines under about eighty thousand a day that say nothing happened.
+
+| Message | When |
+|---|---|
+| `started` | Ready to serve. Carries `address` and `port` — the pair the QR encodes. |
+| `startup failed` | Setup did not finish. Carries the error and is followed by a dialog. |
+| `form served` | The form went to a tablet. Carries the tablet's `ip`. |
+| `form refused` | `GET /` arrived without a usable token. Carries `ip` and whether the token was missing or wrong. |
+| `{id} received` | A submission was queued. |
+| `submission failed` | A submission was rejected. Carries the reason. |
+| `{id} filled` | The extension confirmed the save in OSCAR. |
+
+`{id} received` and `{id} filled` are the pair that matters: one day's log read top to bottom shows which patients made it into the EMR and which were dropped.
+
+Where a function returns an error, its own message is logged verbatim rather than a sentence written here. Where nothing returns an error — a token that fails a byte compare, a counter passing the rate limit — the observed values are logged instead (`token=missing`, `count=13 limit=10`).
+
+**What is never logged:** any field the patient typed. The queue drops a submission after two hours precisely so no health card number outlives the visit; a log file that never expires would undo that. Rejections name the field, never its value.
+
+**What cannot be logged:** a scan that never reaches the machine. A tablet on the wrong network or a blocked firewall port produces no packet, so there is nothing to write — the failure looks identical to nobody scanning. That case is addressed in the tray window, not here.
+
 ## Trade-offs
 
 ### 1. A desktop application rather than a cloud service
@@ -327,6 +352,18 @@ The alternative was bundling a Node runtime as a sidecar to keep the whole proje
 
 The alternatives are a fixed address on the computer, which makes the clinic's network someone's problem, or announcing itself over the network, which some networks block. A QR works everywhere and needs nobody to understand what an IP address is. The cost is a rescan on the rare occasions the address changes.
 
+### 8. The extension is not identified
+
+**Chosen:** the extension's routes are open to anything running on the front desk computer.
+
+A request is refused if it arrives from another machine, or if it carries a web page's origin — which covers the case worth covering, a page in a browser tab reaching for the queue. What is left is that any program already running on that computer can read the waiting list, and so can any other Chrome extension.
+
+The extension can't prove who it is over HTTP. Its own requests carry no origin, so there is nothing in them to check. Pinning its id would exclude other extensions but not a program, and a shared secret has nowhere to live: the extension ships from the Web Store before the application is installed, and can't read a file the installer writes. Proving it needs a different channel — see Future Considerations 6.
+
+**The cost:** the front desk computer has to be trusted. On a machine already running something unwanted, a patient's details are readable for the minute or two they sit in memory — a smaller window than the OSCAR session open in the browser beside it, which is why this is acceptable and not why it is fine.
+
+**When this changes:** if the application ever holds anything longer than a registration, or when a clinic's IT asks what stops another program on that desk from reading it.
+
 ## Pricing
 
 | What | Cost |
@@ -358,6 +395,8 @@ The form stays exactly as it is. What changes is that the clinic can say where e
 
 Windows first. macOS needs an Apple developer account, notarization, and its own testing pass.
 
+It also needs the field mapping found a different way. The application looks for `mapping.json` beside its own executable, which is where the Windows installer puts it. A macOS bundle keeps resources in `Contents/Resources` instead, so the file would be there and the lookup would find nothing — the mapping would be missing on every install. The fix is to ask the framework for its resource directory rather than working it out from the executable's path, decided where the application starts rather than inside the loader.
+
 ### 4. A native tablet app instead of the browser
 
 **What this would replace:** the QR code, and the desktop having to work out its own address.
@@ -387,3 +426,13 @@ A machine does not have one IP address — it has one per network interface. A t
 **Why it matters beyond disk space.** The volume is small — kilobytes a day. The reason to prune is that after B6 the log records that a submission arrived, and at what time. Even with no patient data in the line, keeping an indefinite record of clinic activity is a retention decision, and it should be a deliberate one.
 
 **When to revisit.** Before the first real install, since an unpruned log starts accumulating from the moment the application ships. If the cleanup job is not ready by then, apply the age cap as a stopgap and replace it later — an imperfect prune is better than none.
+
+### 6. Authenticating the extension
+
+**What this would replace:** the origin check in Trade-offs 8, which refuses browser tabs and nothing else.
+
+Native messaging is how a Chrome extension and a desktop application prove each other's identity. Chrome starts the application's helper itself, over a pipe rather than a port, and only for extension ids named in a manifest the installer registers on the machine. Both ends are then settled: the extension knows it reached the installed application, and the application knows Chrome launched it for that extension. It also ends the ten-port discovery, since there is no port.
+
+**What it costs.** The extension's whole transport changes — the polling and the four HTTP routes become a message channel that exists only while Chrome is running, so the badge stops being able to say the application is down. The application grows a second entry point for Chrome to launch, and the installer grows a registry write per browser. The extension's id has to be pinned with a manifest `key` first, which means owning that key for the life of the Web Store listing. The HTTP routes stay regardless, because the tablet still needs them.
+
+**When to revisit.** Together with the answer to Trade-offs 8: when the application holds data longer than a registration, or when a clinic asks. Pinning the id is worth doing before then on its own — it is one manifest field, and it closes the other-extension half of the gap.

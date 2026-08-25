@@ -1,5 +1,5 @@
 use std::io;
-use std::net::{Ipv4Addr, TcpListener};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -13,6 +13,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, fmt};
 
 use crate::auth;
+use crate::routes::tablet;
 use crate::state::AppState;
 
 const PREFERRED_PORT: u16 = 8787;
@@ -33,7 +34,8 @@ pub fn init_logging(log_dir: &Path) -> io::Result<WorkerGuard> {
     Ok(guard)
 }
 
-pub fn start(state: &Arc<AppState>) -> io::Result<()> {
+/// Returns the port that was bound, so the caller can say so in one line.
+pub fn start(state: &Arc<AppState>) -> io::Result<u16> {
     let listener = bind()?;
     let port = listener.local_addr()?.port();
     listener.set_nonblocking(true)?;
@@ -53,13 +55,14 @@ pub fn start(state: &Arc<AppState>) -> io::Result<()> {
             }
         };
 
-        info!(port, "listening on 0.0.0.0");
-
-        let served = axum::serve(listener, router)
-            .with_graceful_shutdown(async move {
-                let _ = rx.await;
-            })
-            .await;
+        let served = axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            let _ = rx.await;
+        })
+        .await;
 
         match served {
             Ok(()) => info!("server stopped"),
@@ -67,27 +70,40 @@ pub fn start(state: &Arc<AppState>) -> io::Result<()> {
         }
     });
 
-    Ok(())
+    Ok(port)
 }
 
-fn router(state: Arc<AppState>) -> Router {
+pub(crate) fn router(state: Arc<AppState>) -> Router {
     // Health stays open: the tablet uses it to tell "front desk asleep" from
     // "form broken", before it has anything else.
     Router::new()
         .route("/api/health", get(health))
+        .merge(crate::routes::extension::routes(state.clone()))
         .merge(tablet_routes(state))
 }
 
-/// The tablet-facing group, empty until B6. Routes must be added *above* the
-/// `layer` call — axum only applies a layer to the routes already on the router.
+/// The tablet-facing group. Routes must be added *above* the `layer` call —
+/// axum only applies a layer to the routes already on the router, and the last
+/// layer added is the outermost, so the rate limit runs before the token check.
+/// The form is merged in after both because it carries its own gate: a browser
+/// opening the QR's URL cannot send a bearer header.
 fn tablet_routes(state: Arc<AppState>) -> Router {
-    Router::new()
-        // B6: .route("/api/submissions", post(...))
-        .layer(middleware::from_fn_with_state(state, auth::require_token))
+    crate::routes::tablet::routes(state.clone())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_token,
+        ))
+        .layer(middleware::from_fn_with_state(
+            tablet::Limiter::new(),
+            tablet::rate_limit,
+        ))
+        .merge(crate::routes::tablet::form_route(state))
 }
 
+/// Answers before the token is checked, so it says only that something is
+/// listening. Anything more is told to a caller that has proved nothing.
 async fn health() -> Json<Value> {
-    Json(json!({ "ok": true, "version": env!("CARGO_PKG_VERSION") }))
+    Json(json!({ "ok": true }))
 }
 
 /// Only the last failure survives the loop, so each one is logged with its port

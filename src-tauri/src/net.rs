@@ -33,7 +33,6 @@ pub struct PairingInfo {
 
 #[tauri::command]
 pub fn get_pairing_info(state: State<'_, Arc<AppState>>) -> Option<PairingInfo> {
-    info!("pairing info requested");
     let address = state.address()?;
     let port = state.port()?;
     Some(PairingInfo {

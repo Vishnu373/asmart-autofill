@@ -10,9 +10,10 @@ Windows only. macOS is deferred — see Future Considerations in `design.md`.
 
 Rust on Windows links with the Microsoft linker, so this has to come first — installing Rust before it produces a `link.exe not found` error on the first build.
 
-Documentation: https://visualstudio.microsoft.com/downloads 
+Documentation: https://visualstudio.microsoft.com/downloads
+
 - select the **Desktop development with C++** option.
-- That brings in the MSVC compiler, the linker, and the Windows SDK. 
+- That brings in the MSVC compiler, the linker, and the Windows SDK.
 
 ### 2. Rust
 

@@ -9,4 +9,14 @@ export default tseslint.config(
   js.configs.recommended,
   tseslint.configs.recommended,
   prettier,
+  {
+    files: ['apps/extension/**/*.ts'],
+    languageOptions: { globals: { chrome: 'readonly' } },
+  },
+  {
+    files: ['**/*.mjs'],
+    languageOptions: {
+      globals: { URL: 'readonly', console: 'readonly', process: 'readonly' },
+    },
+  },
 );

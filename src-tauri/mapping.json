@@ -1,0 +1,20 @@
+{
+  "emr": "oscar",
+  "version": 1,
+  "fields": {
+    "first_name": "#firstName",
+    "last_name": "#lastName",
+    "preferred_name": "#preferredName",
+    "address": "#address",
+    "city": "#city",
+    "province": "#province",
+    "postal_code": "#postal",
+    "phone": "#phone",
+    "email": "#email",
+    "date_of_birth": "#dateOfBirth",
+    "health_insurance_number": "#hin",
+    "health_insurance_version": "#ver",
+    "hc_type": "#hcType"
+  },
+  "save_button": "form[name=addDemographic] input[type=submit]"
+}

@@ -5,21 +5,43 @@ use std::sync::atomic::{AtomicU16, Ordering};
 
 use tokio::sync::oneshot;
 
+use crate::mapping::Mapping;
+use crate::queue::Queue;
+
 pub struct AppState {
     port: AtomicU16,
     shutdown: Mutex<Option<oneshot::Sender<()>>>,
     token: String,
     address: Mutex<Option<Ipv4Addr>>,
+    queue: Arc<Queue>,
+    mapping: Arc<Mapping>,
 }
 
 impl AppState {
     pub fn new(token: String) -> Arc<Self> {
+        Self::with_mapping(token, Mapping::new())
+    }
+
+    /// `Mapping::new()` reads the file beside the executable, which under
+    /// `cargo test` is the test binary in `target/…/deps`. A test that needs the
+    /// route to serve something hands in a mapping of its own.
+    pub(crate) fn with_mapping(token: String, mapping: Mapping) -> Arc<Self> {
         Arc::new(Self {
             port: AtomicU16::new(0),
             shutdown: Mutex::new(None),
             token,
             address: Mutex::new(None),
+            queue: Arc::new(Queue::new()),
+            mapping: Arc::new(mapping),
         })
+    }
+
+    pub fn queue(&self) -> &Arc<Queue> {
+        &self.queue
+    }
+
+    pub fn mapping(&self) -> &Arc<Mapping> {
+        &self.mapping
     }
 
     pub fn token(&self) -> &str {

@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "asmart autofill",
+  "version": "0.1.0",
+  "description": "Fills OSCAR's demographic form from the front desk application's waiting list.",
+  "permissions": ["activeTab", "alarms"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*/oscar/demographic/*"],
+      "js": ["content.js"]
+    }
+  ]
+}

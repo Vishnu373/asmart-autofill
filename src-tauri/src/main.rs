@@ -1,15 +1,19 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod auth;
+mod mapping;
 mod net;
+mod queue;
+mod routes;
 mod server;
 mod state;
+mod submission;
 
 use std::sync::Arc;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{Manager, RunEvent, WindowEvent};
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 #[cfg(not(debug_assertions))]
 use tauri_plugin_autostart::ManagerExt;
@@ -27,7 +31,10 @@ fn main() {
             None,
         ))
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![net::get_pairing_info])
+        .invoke_handler(tauri::generate_handler![
+            net::get_pairing_info,
+            queue::get_waiting_count
+        ])
         .setup(|app| {
             if let Err(e) = init(app) {
                 fatal(app.handle(), &e);
@@ -64,9 +71,14 @@ fn init(app: &mut tauri::App) -> Result<(), SetupError> {
     let token = auth::load_or_create(&app.path().app_config_dir()?)?;
     let state = AppState::new(token);
     let address = net::detect();
-    info!(?address, "lan address");
     state.set_address(address);
-    server::start(&state)?;
+    let port = server::start(&state)?;
+    info!(?address, port, "started");
+    queue::spawn_sweeper(state.queue().clone());
+    let handle = app.handle().clone();
+    state.queue().set_on_change(move || {
+        let _ = handle.emit(queue::QUEUE_CHANGED, ());
+    });
     net::watch(app.handle().clone(), state.clone());
     app.manage(state.clone());
 

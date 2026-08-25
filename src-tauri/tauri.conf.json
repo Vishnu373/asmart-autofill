@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.asmart.autofill",
   "build": {
-    "frontendDist": "placeholder-ui"
+    "frontendDist": "../apps/tray/dist",
+    "beforeDevCommand": "bun run build:ui",
+    "beforeBuildCommand": "bun run build:ui"
   },
   "app": {
     "windows": [
@@ -24,6 +26,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "resources": ["mapping.json"],
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"]
   }
 }

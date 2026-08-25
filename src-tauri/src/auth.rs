@@ -10,6 +10,7 @@ use axum::response::Response;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use subtle::ConstantTimeEq;
+use tracing::warn;
 
 use crate::state::AppState;
 
@@ -85,7 +86,17 @@ pub async fn require_token(
 
     match presented {
         Some(token) if matches(token, state.token()) => Ok(next.run(request).await),
-        _ => Err(StatusCode::UNAUTHORIZED),
+        // This layer only wraps the tablet's submission route, so a refusal here
+        // is a submission that never reached the queue.
+        present => {
+            let token = if present.is_some() {
+                "wrong"
+            } else {
+                "missing"
+            };
+            warn!(token, "submission failed");
+            Err(StatusCode::UNAUTHORIZED)
+        }
     }
 }
 

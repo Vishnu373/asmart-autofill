@@ -62,6 +62,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-autostart",
  "tauri-plugin-dialog",
+ "time",
  "tokio",
  "tower",
  "tracing",

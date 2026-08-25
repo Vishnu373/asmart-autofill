@@ -12,9 +12,12 @@ axum = "0.8.9"
 base64 = "0.22"
 getrandom = "0.3"
 netdev = { version = "0.46", default-features = false, features = ["gateway"] }
-serde = { version = "1.0.229", features = ["derive"] }
+# `rc` is what makes `Arc<Value>` serializable, which `GET /api/mapping` needs.
+# Compiled today only because `tauri` asks for it; declared here because we use it.
+serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = "1"
 subtle = "2.6"
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
 tauri = { version = "2.11.5", features = ["tray-icon"] }
 tauri-plugin-autostart = "2.5.1"
 tauri-plugin-dialog = "2.7.2"
