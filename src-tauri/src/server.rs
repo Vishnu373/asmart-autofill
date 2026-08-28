@@ -78,7 +78,6 @@ pub(crate) fn router(state: Arc<AppState>) -> Router {
     // "form broken", before it has anything else.
     Router::new()
         .route("/api/health", get(health))
-        .merge(crate::routes::extension::routes(state.clone()))
         .merge(tablet_routes(state))
 }
 

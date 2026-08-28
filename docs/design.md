@@ -19,7 +19,7 @@
 
 Patients see multiple columns to be filled out for registration, which is confusing to them. After that, the staff verifies it and adds it to the EMR demographic.
 
-This replaces that with a form on a tablet at the front desk. The patient fills in a simplified form (13 fields) and submits. The details land on the front desk computer, where the staff member opens a new patient record in OSCAR, clicks once to fill it in, checks it over, and saves.
+This replaces that with a form on a tablet at the front desk. The patient fills in a simplified form (13 fields) and submits. The details land on the front desk computer, where the staff member opens the waiting patient, copies each field into a new OSCAR record, and saves.
 
 **Goals**
 
@@ -36,11 +36,11 @@ This replaces that with a form on a tablet at the front desk. The patient fills 
 
 The tablet and the computer are ten metres apart on the same WiFi. Patient details never need to leave the building, so nothing here goes to the internet.
 
-A desktop application on the front desk computer is the whole product and the source of truth. It serves the form to the tablet, receives the submission, holds it, and hands it to the browser extension that fills OSCAR. There is no cloud service, no database, and no account to sign into.
+A desktop application on the front desk computer is the whole product and the source of truth. It serves the form to the tablet, receives the submission, holds it, and shows it to staff a field at a time. There is no cloud service, no database, and no account to sign into.
 
-The application exists because neither a browser tab nor a Chrome extension can accept an incoming connection — both can only make outgoing ones. For the tablet to send anything to the computer, something on that computer has to be listening at an address. That is the application's job.
+The application exists because a browser tab cannot accept an incoming connection — it can only make outgoing ones. For the tablet to send anything to the computer, something on that computer has to be listening at an address. That is the application's job.
 
-The only things that reach the internet are the update feed and error reporting.
+The only things the application sends to the internet are the update check and error reporting.
 
 ## Tech Stack
 
@@ -48,8 +48,7 @@ The only things that reach the internet are the update feed and error reporting.
 |---|---|
 | Desktop application | Tauri |
 | Backend / Application core | Rust — the HTTP server and the in-memory queue |
-| Frontend / Patient form, tray window | React + TypeScript |
-| Chrome Extension | TypeScript, Manifest V3 |
+| Frontend / Patient form, desktop window | React + TypeScript |
 | Storage | None — submissions are held in memory |
 | Transport | HTTP over the clinic LAN |
 | Updates | Tauri's updater |
@@ -74,11 +73,11 @@ The only things that reach the internet are the update feed and error reporting.
 
 ### Setting up
 
-1. The clinic installs the application on the front desk computer. It starts with Windows and sits in the system tray.
+1. The clinic installs the application on the front desk computer. Staff open it at the start of the day like any other program.
 2. On start, it picks up the computer's address on the clinic WiFi and listens there.
-3. The tray window shows a QR code containing that address and a pairing token. Staff scan it once on the tablet, which opens the form.
+3. The window shows a QR code containing that address and a pairing token, and the same link as text with a copy button. Staff scan it once on the tablet, which opens the form.
 4. If the computer's address changes — a reboot, a new lease — the QR shows the new one. Staff rescan. Nothing else is configured.
-5. The extension is installed in Chrome on the same computer. It has no settings; everything it needs it asks the application for.
+5. Closing the window stops the application. Nothing is configured to run without a window open.
 
 ### Patient filling in the form
 
@@ -91,17 +90,17 @@ The only things that reach the internet are the update feed and error reporting.
 
 ### Staff entering it into OSCAR
 
-12. The extension shows the patients waiting to be entered, newest first.
-13. The staff member opens a new patient record in OSCAR and picks the patient from the list.
-14. Clicking fill puts the details into the OSCAR fields and highlights what it filled.
-15. If the record already has details in it, it refuses to fill and says so.
-16. If any field couldn't be filled, it says which ones rather than failing quietly.
-17. The staff member checks everything, corrects anything wrong directly in OSCAR, and saves.
+12. The window shows how many patients are waiting and lists them, newest first.
+13. Clicking one opens every field the patient filled in, in the order they filled them.
+14. Each field has a copy button that puts just that value on the clipboard and confirms it did.
+15. Province and health-card province copy the two-letter code, since that is what OSCAR's dropdown takes; the full name is shown beside it to read.
+16. A field the patient left blank shows as blank, with nothing to copy.
+17. The staff member pastes each value into a new OSCAR record, checks it over, and saves.
 
 ### After it's entered
 
-18. When the staff member saves in OSCAR, the extension tells the application, which drops the submission from memory.
-19. Anything not entered within 2 hours is dropped automatically.
+18. The staff member clicks **Mark as entered**, which drops the submission from memory and returns to the list.
+19. Anything not entered within 2 hours is dropped automatically. If that happens while the patient is open, the window says so rather than showing details that no longer belong to anyone.
 20. Closing the application, or restarting the computer, drops everything waiting.
 
 ## Non-Functional Requirements
@@ -111,31 +110,29 @@ The only things that reach the internet are the update feed and error reporting.
 | Tablets per clinic | 1 |
 | Registrations per clinic per day | 40–50 |
 | Submissions waiting at once | 1 |
-| Patient submits → appears in the extension | Under 1 second |
+| Patient submits → appears in the window | Under 1 second |
 | Any local request | Under 50ms |
 
 Everything here happens on one machine over a local network, so the numbers are not a constraint on the design. A hundred clinics is a hundred independent copies that never meet.
 
-### Getting new submissions to the extension
+### Getting new submissions to the window
 
-The extension asks the application for the waiting list once a second. On localhost that costs nothing, and it removes every failure mode a pushed connection has — no reconnection logic, no connection held open in a tab, no fallback path.
+The window is the application's own frontend, so the queue tells it directly: every add, removal, and expiry emits an event the window listens for and re-reads the list on. Nothing polls.
 
 ## Diagrams
 
 ### The whole thing
 
-Three parts, all inside the clinic.
+Two parts, both inside the clinic, plus the EMR already on the desk.
 
 ```mermaid
 flowchart LR
     T["Tablet at front desk<br/>(browser, nothing installed)"]
     A["Desktop application<br/>front desk computer"]
-    E["Chrome extension<br/>same computer"]
     O["OSCAR<br/>new patient record"]
 
     T -->|"clinic WiFi"| A
-    A -->|"localhost"| E
-    E -->|"fills the fields"| O
+    A -->|"staff copy each field"| O
 ```
 
 ### A patient submits
@@ -145,7 +142,7 @@ sequenceDiagram
     participant P as Patient
     participant T as Tablet
     participant A as Application
-    participant E as Extension
+    participant W as Window
 
     P->>T: Fills in the fields
     P->>T: Presses Submit
@@ -154,9 +151,8 @@ sequenceDiagram
     A->>A: Holds it in memory
     A-->>T: Confirms it was received
     T->>P: Clears to a blank form
-    E->>A: Asks for the waiting list
-    A-->>E: Returns it
-    E->>E: Shows a badge
+    A->>W: Emits queue-changed
+    W->>A: Re-reads the waiting list
 ```
 
 ### Staff enters it into OSCAR
@@ -164,30 +160,30 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant St as Staff
-    participant E as Extension
-    participant O as OSCAR
+    participant W as Window
     participant A as Application
+    participant O as OSCAR
 
     St->>O: Opens a new patient record
-    St->>E: Picks the patient
-    E->>A: Asks for the details and the field mapping
-    E->>O: Checks the fields are empty
+    St->>W: Picks the patient from the list
+    W->>A: Asks for the 13 fields
+    A-->>W: Returns them
 
-    alt Record already has details in it
-        E->>St: Refuses to fill and says why
-    else Record is blank
-        E->>O: Fills the fields and highlights them
-        E->>St: Reports any field it couldn't fill
-        St->>O: Checks it over, fixes anything, saves
-        O-->>E: Save detected
-        E->>A: Tells the application it's done
-        A->>A: Drops it from memory
+    loop Each field
+        St->>W: Clicks Copy
+        St->>O: Pastes into the box
     end
+
+    St->>O: Checks it over, fixes anything, saves
+    St->>W: Clicks Mark as entered
+    W->>A: Drops it from memory
 ```
 
 ## Local API
 
-Everything the application serves. It listens on one port on two addresses: the LAN address for the tablet, and localhost for the extension.
+Everything the application serves, which is now only what the tablet needs. It listens on one port on the LAN address.
+
+The window is the application's own frontend and does not go through HTTP at all — it calls into the core directly (`list_waiting`, `get_submission`, `mark_entered`, `get_pairing_info`) and is told about changes by event. That is why the waiting list is not reachable over the network by anything, which is a stronger position than v1's origin check ever was.
 
 ### For the tablet
 
@@ -216,24 +212,6 @@ POST /api/submissions
 { "id": "a3f9" }
 ```
 
-### For the extension
-
-| Endpoint | What it does |
-|---|---|
-| `GET /api/pending` | The list of patients waiting. Names and times only. |
-| `GET /api/pending/{id}` | The full details for one patient, for filling in. |
-| `POST /api/pending/{id}/filled` | Staff saved it in OSCAR. Drops it from memory. |
-| `GET /api/mapping` | Which OSCAR field each value goes into. |
-
-These are served on localhost only, and any request carrying a web page's origin is refused, so a page open in a browser on this machine can't read the queue. That is the whole of the check. A request carrying no origin at all is allowed, because that is what the extension's own requests look like — and so is any other extension's. See [Trade-offs 8](#8-the-extension-is-not-identified).
-
-```
-GET /api/pending
-
-200 OK
-[ { "id": "a3f9", "name": "Jane Doe", "submitted_at": "2026-08-13T14:12:04Z" } ]
-```
-
 ### Responses
 
 | Code | When |
@@ -241,8 +219,6 @@ GET /api/pending
 | `200` / `201` | Success. |
 | `400` | Details failed validation. |
 | `401` | Missing or wrong pairing token. |
-| `404` | No such submission — already entered, or expired. |
-| `409` | That submission was already marked entered. |
 | `429` | Too many submissions too quickly. |
 
 ## Data
@@ -255,34 +231,15 @@ Nothing is written to disk. A submission is a record in memory that lives from t
 | `details` | The 13 fields. |
 | `submitted_at` | When the patient pressed Submit. |
 
-It leaves memory when staff marks it filled, when two hours pass, or when the application stops. There is no database to back up, no history to protect, and no copy of a health card number anywhere on disk.
+It leaves memory when staff marks it entered, when two hours pass, or when the application stops. There is no database to back up, no history to protect, and nothing the application itself writes to disk.
 
-### The OSCAR field mapping
-
-Which OSCAR box each field goes into lives in a JSON file next to the application, which the extension fetches when it fills:
-
-```json
-{
-  "emr": "oscar",
-  "version": 1,
-  "fields": {
-    "first_name": "#firstName",
-    "last_name":  "#lastName",
-    "address":    "#address",
-    "city":       "#city",
-    "postal":     "#postal"
-  },
-  "save_button": "form[name=addDemographic]"
-}
-```
-
-It sits with the application rather than inside the extension on purpose. The application updates itself in minutes; a Chrome extension waits days for Web Store review. Keeping the mapping on the application side means a broken selector — the most likely thing to break in this whole system, since OSCAR changes and nobody tells you — is fixed on your schedule. It also keeps the extension a thin pipe that rarely needs republishing, and makes another EMR another file rather than a code change.
+The clipboard is the exception, and it is worth being honest about it. Copying a field puts that value — a health card number included — on the Windows clipboard, where it outlives the two-hour window entirely. With Clipboard History (Win+V) on, the last twenty-five values persist; with Cloud Clipboard on, they sync to whatever Microsoft account is signed in, which is the one path by which a patient's details can leave the clinic. Both are off by default on a fresh Windows install and both are Group Policy settings, so the deployment note is to leave them off rather than to work around them in the application.
 
 ## Observability
 
 A daily rolling file at `%LOCALAPPDATA%\com.asmart.autofill\logs\app.log`, `info` by default, `RUST_LOG` to raise it.
 
-One line per event, not per request. The extension asks for pending work once a second, so request logging would bury these seven lines under about eighty thousand a day that say nothing happened.
+One line per event, not per request. A clinic registers forty or fifty patients a day, so a log of events reads in a minute where a log of requests would not.
 
 | Message | When |
 |---|---|
@@ -292,15 +249,25 @@ One line per event, not per request. The extension asks for pending work once a 
 | `form refused` | `GET /` arrived without a usable token. Carries `ip` and whether the token was missing or wrong. |
 | `{id} received` | A submission was queued. |
 | `submission failed` | A submission was rejected. Carries the reason. |
-| `{id} filled` | The extension confirmed the save in OSCAR. |
+| `{id} entered` | Staff marked the submission entered in the window. |
 
-`{id} received` and `{id} filled` are the pair that matters: one day's log read top to bottom shows which patients made it into the EMR and which were dropped.
+`{id} received` and `{id} entered` are the pair that matters: one day's log read top to bottom shows which patients made it into the EMR and which were dropped.
 
 Where a function returns an error, its own message is logged verbatim rather than a sentence written here. Where nothing returns an error — a token that fails a byte compare, a counter passing the rate limit — the observed values are logged instead (`token=missing`, `count=13 limit=10`).
 
 **What is never logged:** any field the patient typed. The queue drops a submission after two hours precisely so no health card number outlives the visit; a log file that never expires would undo that. Rejections name the field, never its value.
 
-**What cannot be logged:** a scan that never reaches the machine. A tablet on the wrong network or a blocked firewall port produces no packet, so there is nothing to write — the failure looks identical to nobody scanning. That case is addressed in the tray window, not here.
+**What cannot be logged:** a scan that never reaches the machine. A tablet on the wrong network or a blocked firewall port produces no packet, so there is nothing to write — the failure looks identical to nobody scanning. That case is addressed in the window, not here.
+
+## Distribution
+
+An unsigned NSIS installer, carried to the front desk computer once. Windows SmartScreen warns on the first run; an EV certificate would remove that and is priced below, not bought.
+
+After that the application updates itself. On launch it reads a `latest.json` from the project's GitHub Releases, compares the version against its own, and offers the update in a strip along the bottom of the window. Nothing installs unprompted — an application that restarts on its own mid-registration loses the patient standing at the desk.
+
+The update is signed with a key that never leaves the developer's machine, and the application refuses a bundle whose signature does not match. That is what stops a clinic's network, or whoever controls the download, substituting a different program. The signing key is therefore the one secret in this project that matters: losing it means no existing install can ever update again.
+
+The feed is a plain public URL with no credentials attached, which is why the repository holding the releases has to be public. The steps are in [releasing.md](releasing.md).
 
 ## Trade-offs
 
@@ -316,19 +283,7 @@ The data lives about ninety seconds. A database would mean health card numbers o
 
 **The cost:** restart the computer with three patients waiting and those three fill the form again.
 
-### 3. Polling rather than pushing
-
-**Chosen:** the extension asks once a second.
-
-Over localhost this is free, and it deletes the reconnection logic, the connection held open in the OSCAR tab, and the fallback path that a pushed connection needs. The delay is under a second, which nobody notices.
-
-### 4. The mapping lives with the application, not the extension
-
-**Chosen:** the extension fetches the OSCAR selectors from the application at fill time.
-
-The application updates on your schedule; the extension waits on Chrome's review queue. Putting the part most likely to break on the side you can fix quickly is the difference between a broken clinic waiting minutes and waiting a week.
-
-### 5. HTTP for now
+### 3. HTTP for now
 
 **Chosen:** the tablet talks to the application unencrypted.
 
@@ -336,7 +291,7 @@ WiFi already encrypts traffic between a device and the router, and this is a clo
 
 **When this changes:** before selling to any clinic that asks how the data is protected in transit, which will happen.
 
-### 6. Rust in the core, React everywhere else
+### 4. Rust in the core, React everywhere else
 
 **Chosen:** Tauri, with the HTTP server and queue in Rust and everything visible in React.
 
@@ -344,25 +299,25 @@ The application has to accept an incoming connection, and no webview can. Someth
 
 The alternative was bundling a Node runtime as a sidecar to keep the whole project in TypeScript. That costs about 50MB of install, a second process to supervise, and gives up the reason to use Tauri at all.
 
-**Why the cost is acceptable:** the Rust is one file that stops changing once the routes work. The parts that change often — the form, the tray window, the field mapping, the extension — are all TypeScript or JSON.
+**Why the cost is acceptable:** the Rust is one file that stops changing once the routes work. The parts that change often — the form and the desktop window — are both TypeScript.
 
-### 7. QR code for discovery
+### 5. QR code for discovery
 
 **Chosen:** the application shows a QR with its current address, staff scan it on the tablet.
 
 The alternatives are a fixed address on the computer, which makes the clinic's network someone's problem, or announcing itself over the network, which some networks block. A QR works everywhere and needs nobody to understand what an IP address is. The cost is a rescan on the rare occasions the address changes.
 
-### 8. The extension is not identified
+### 6. Staff copy each field rather than an extension filling them
 
-**Chosen:** the extension's routes are open to anything running on the front desk computer.
+**Chosen:** the window hands staff each value on a click; nothing types into OSCAR.
 
-A request is refused if it arrives from another machine, or if it carries a web page's origin — which covers the case worth covering, a page in a browser tab reaching for the queue. What is left is that any program already running on that computer can read the waiting list, and so can any other Chrome extension.
+v1 shipped a Chrome extension that read the queue over localhost and filled the OSCAR form. It is deprecated. What it bought was thirteen fields typed by a machine instead of a person. What it cost was a second artifact on a separate release cycle — a Web Store review of several days sat between a broken selector and a working clinic, which is why the field mapping had to live on the application side in the first place. It also meant the waiting list had to be readable over HTTP by something that could not prove who it was, which was the weakest point in the whole design.
 
-The extension can't prove who it is over HTTP. Its own requests carry no origin, so there is nothing in them to check. Pinning its id would exclude other extensions but not a program, and a shared secret has nowhere to live: the extension ships from the Web Store before the application is installed, and can't read a file the installer writes. Proving it needs a different channel — see Future Considerations 6.
+Removing it deletes the mapping file, the four localhost routes, the origin check, the Web Store listing, and the entire class of failure where OSCAR changes a selector and the fill silently stops working.
 
-**The cost:** the front desk computer has to be trusted. On a machine already running something unwanted, a patient's details are readable for the minute or two they sit in memory — a smaller window than the OSCAR session open in the browser beside it, which is why this is acceptable and not why it is fine.
+**The cost:** staff paste thirteen times per patient instead of clicking once, and each paste goes through the Windows clipboard — see Data. That is real, and it is the reason this trade-off is written down rather than assumed. It is still less work than reading a paper form and typing it, which is what the product replaces, and it never fails in a way that needs a release to fix.
 
-**When this changes:** if the application ever holds anything longer than a registration, or when a clinic's IT asks what stops another program on that desk from reading it.
+**When this changes:** if pasting turns out to be the slow part of registration in practice, the answer is more likely a one-click paste driven from the desktop side — something that types into the focused window — than a return to a browser extension.
 
 ## Pricing
 
@@ -371,7 +326,6 @@ The extension can't prove who it is over HTTP. Its own requests carry no origin,
 | Servers | $0 |
 | Database | $0 |
 | EV code signing certificate | ~$300–500/year |
-| Chrome Web Store, one-time | $7 |
 | Domain, for the update feed and site | ~$20/year |
 | Static hosting for the update feed | ~$0 |
 
@@ -389,13 +343,13 @@ The first is what comparable local-transfer tools do and is the likely answer.
 
 ### 2. Custom mapping
 
-The form stays exactly as it is. What changes is that the clinic can say where each field should land in their own EMR, instead of waiting for a mapping to be written for them. This is what makes the product work with an EMR that hasn't been seen before, without a code change or a release.
+The form stays exactly as it is. What changes is that the clinic can say which of the 13 fields their EMR wants and what to call them, instead of reading a list written for OSCAR. This is what makes the product work with an EMR that hasn't been seen before, without a code change or a release. It is a labelling and ordering job now that nothing is being filled automatically — much less than the selector map v1 needed.
 
 ### 3. macOS
 
 Windows first. macOS needs an Apple developer account, notarization, and its own testing pass.
 
-It also needs the field mapping found a different way. The application looks for `mapping.json` beside its own executable, which is where the Windows installer puts it. A macOS bundle keeps resources in `Contents/Resources` instead, so the file would be there and the lookup would find nothing — the mapping would be missing on every install. The fix is to ask the framework for its resource directory rather than working it out from the executable's path, decided where the application starts rather than inside the loader.
+Dropping the extension removed the one part of the application that read a file beside its own executable, which was the thing that would have broken on a macOS bundle. What is left is the updater, which needs a macOS target and its own signed artifacts in the release feed.
 
 ### 4. A native tablet app instead of the browser
 
@@ -411,7 +365,7 @@ A machine does not have one IP address — it has one per network interface. A t
 
 **What it costs.** An Android and an iOS build, two store accounts and two review processes, a release cycle that no longer moves at the speed of the desktop application, and a pairing flow that has to be designed rather than inherited from a URL. It also gives up the single largest advantage of the current design: a tablet needs nothing installed, so any device with a camera and a browser works, including a personal phone.
 
-**When to revisit.** If address detection causes trouble on real installs, or if a clinic asks for offline capture. Until then the QR is the cheaper answer. A smaller step in the same direction is listing every candidate address in the tray window so staff can switch when the automatic choice is wrong — that covers the same failure without a mobile app.
+**When to revisit.** If address detection causes trouble on real installs, or if a clinic asks for offline capture. Until then the QR is the cheaper answer. A smaller step in the same direction is listing every candidate address in the window so staff can switch when the automatic choice is wrong — that covers the same failure without a mobile app.
 
 ### 5. Log retention by importance, not by age
 
@@ -426,13 +380,3 @@ A machine does not have one IP address — it has one per network interface. A t
 **Why it matters beyond disk space.** The volume is small — kilobytes a day. The reason to prune is that after B6 the log records that a submission arrived, and at what time. Even with no patient data in the line, keeping an indefinite record of clinic activity is a retention decision, and it should be a deliberate one.
 
 **When to revisit.** Before the first real install, since an unpruned log starts accumulating from the moment the application ships. If the cleanup job is not ready by then, apply the age cap as a stopgap and replace it later — an imperfect prune is better than none.
-
-### 6. Authenticating the extension
-
-**What this would replace:** the origin check in Trade-offs 8, which refuses browser tabs and nothing else.
-
-Native messaging is how a Chrome extension and a desktop application prove each other's identity. Chrome starts the application's helper itself, over a pipe rather than a port, and only for extension ids named in a manifest the installer registers on the machine. Both ends are then settled: the extension knows it reached the installed application, and the application knows Chrome launched it for that extension. It also ends the ten-port discovery, since there is no port.
-
-**What it costs.** The extension's whole transport changes — the polling and the four HTTP routes become a message channel that exists only while Chrome is running, so the badge stops being able to say the application is down. The application grows a second entry point for Chrome to launch, and the installer grows a registry write per browser. The extension's id has to be pinned with a manifest `key` first, which means owning that key for the life of the Web Store listing. The HTTP routes stay regardless, because the tablet still needs them.
-
-**When to revisit.** Together with the answer to Trade-offs 8: when the application holds data longer than a registration, or when a clinic asks. Pinning the id is worth doing before then on its own — it is one manifest field, and it closes the other-extension half of the gap.

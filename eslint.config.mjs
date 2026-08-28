@@ -10,10 +10,6 @@ export default tseslint.config(
   tseslint.configs.recommended,
   prettier,
   {
-    files: ['apps/extension/**/*.ts'],
-    languageOptions: { globals: { chrome: 'readonly' } },
-  },
-  {
     files: ['**/*.mjs'],
     languageOptions: {
       globals: { URL: 'readonly', console: 'readonly', process: 'readonly' },

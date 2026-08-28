@@ -3,5 +3,13 @@
   "identifier": "default",
   "description": "Default capability for the main window.",
   "windows": ["main"],
-  "permissions": ["core:default", "allow-get-pairing-info", "allow-get-waiting-count"]
+  "permissions": [
+    "core:default",
+    "allow-get-pairing-info",
+    "allow-list-waiting",
+    "allow-get-submission",
+    "allow-mark-entered",
+    "clipboard-manager:allow-write-text",
+    "updater:default"
+  ]
 }

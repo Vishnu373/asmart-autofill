@@ -19,9 +19,9 @@ pub struct Submission {
     pub hc_type: String,
 }
 
-/// OSCAR's province and HC-type boxes are dropdowns, and the extension fills a
-/// dropdown by matching an option's value exactly. Free text here would mean
-/// "Ontario" arriving at a box whose option reads `ON`, which fills nothing.
+/// OSCAR's province and HC-type boxes are dropdowns whose options read `ON`, not
+/// "Ontario". Collecting the code is what makes the value staff copy out the one
+/// the dropdown actually takes.
 const PROVINCES: [&str; 13] = [
     "AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT",
 ];

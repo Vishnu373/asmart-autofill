@@ -1,6 +1,6 @@
 # Dev Machine Setup
 
-One-time setup. For day-to-day commands see [README.md](README.md).
+One-time setup. For day-to-day commands see the [README](../README.md).
 
 Windows only. macOS is deferred — see Future Considerations in `design.md`.
 

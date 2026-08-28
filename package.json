@@ -4,13 +4,12 @@
   "private": true,
   "workspaces": [
     "apps/*",
-    "packages/*",
-    "e2e"
+    "packages/*"
   ],
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
-    "build:ui": "bun run --filter '@asmart/form' build && bun run --filter '@asmart/tray' build",
+    "build:ui": "bun run --filter '@asmart/form' build && bun run --filter '@asmart/desktop' build",
     "test": "vitest run",
     "tauri": "tauri",
     "lint": "bun run lint:rust && bun run lint:ts",
@@ -18,7 +17,6 @@
     "lint:ts": "eslint . && tsc --noEmit",
     "format": "prettier --write . && cargo fmt --manifest-path src-tauri/Cargo.toml",
     "format:check": "prettier --check . && cargo fmt --manifest-path src-tauri/Cargo.toml --check",
-    "build:extension": "bun run --filter '@asmart/extension' build",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

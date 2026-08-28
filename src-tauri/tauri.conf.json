@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.asmart.autofill",
   "build": {
-    "frontendDist": "../apps/tray/dist",
+    "frontendDist": "../apps/desktop/dist",
     "beforeDevCommand": "bun run build:ui",
     "beforeBuildCommand": "bun run build:ui"
   },
@@ -13,10 +13,12 @@
       {
         "label": "main",
         "title": "asmart-autofill",
-        "width": 420,
-        "height": 560,
-        "resizable": false,
-        "visible": false
+        "width": 520,
+        "height": 780,
+        "minWidth": 420,
+        "minHeight": 560,
+        "resizable": true,
+        "visible": true
       }
     ],
     "security": {
@@ -26,7 +28,15 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "resources": ["mapping.json"],
+    "createUpdaterArtifacts": false,
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Vishnu373/asmart-autofill/releases/latest/download/latest.json"
+      ],
+      "pubkey": ""
+    }
   }
 }

@@ -15,14 +15,13 @@ bun run typecheck      # tsc alone
 
 ## Building one part
 
-`bun run build` bundles everything. To rebuild a single frontend without touching Rust:
+`bun run build` bundles everything. To rebuild the frontends without touching Rust:
 
 ```
-bun run build:ui         # form + tray
-bun run build:extension  # Chrome extension
+bun run build:ui   # form + desktop window
 ```
 
-The form is inlined into the Rust binary at compile time, so a change to `apps/form` needs `build:ui` before the next `cargo` build sees it.
+`bun run dev` and `bun run build` run `build:ui` themselves. A bare `cargo` command does not, and the form is inlined into the Rust binary at compile time — so a change to `apps/form` needs `build:ui` first to be visible to it.
 
 ## Server
 
@@ -36,9 +35,9 @@ curl http://127.0.0.1:8787/api/health
 
 It answers before any token is checked, so it says only that something is listening.
 
-Port 8787 is preferred, falling back through 8796 if taken. The tray window shows the port actually bound. If all ten are unavailable the app refuses to start and says so in a dialog naming the range it tried.
+Port 8787 is preferred, falling back through 8796 if taken. The window shows the port actually bound. If all ten are unavailable the app refuses to start and says so in a dialog naming the range it tried.
 
-From a tablet on the same WiFi, use the machine's LAN address rather than `127.0.0.1` — the tray window shows the one it selected.
+From a tablet on the same WiFi, use the machine's LAN address rather than `127.0.0.1` — the window shows the one it selected.
 
 ## Logs
 
@@ -56,10 +55,10 @@ RUST_LOG=debug bun run dev
 
 ## Installer
 
-The bundle is unsigned, so Windows SmartScreen warns on first run. Signing is out of scope for v1.
+The bundle is unsigned, so Windows SmartScreen warns on first run. Code signing is still out of scope; the updater's own signing key is a separate thing and is set up in [releasing.md](releasing.md).
 
-An installed release build registers itself to start at Windows login. Development builds deliberately do not.
+The application does not start with Windows and has no tray icon — staff open it like any other program, and closing the window quits it.
 
 ## Layout
 
-See Project structure in the [README](../README.md). `implementation.md` holds the phase plan and progress.
+See Project structure in the [README](../README.md). The phase plans that built v1 and v2 are not kept in the repo — `.gitignore` holds an `implementation.md` entry from that habit.

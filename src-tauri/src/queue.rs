@@ -5,6 +5,7 @@ use serde::Serialize;
 use tauri::State;
 use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
+use tracing::info;
 
 use crate::state::AppState;
 use crate::submission::Submission;
@@ -124,10 +125,6 @@ impl Queue {
             .collect()
     }
 
-    pub fn count(&self) -> usize {
-        self.records.lock().unwrap().len()
-    }
-
     pub fn get(&self, id: &str) -> Option<Entry> {
         let records = self.records.lock().unwrap();
         records
@@ -182,8 +179,24 @@ fn generate_id() -> String {
 }
 
 #[tauri::command]
-pub fn get_waiting_count(state: State<'_, Arc<AppState>>) -> usize {
-    state.queue().count()
+pub fn list_waiting(state: State<'_, Arc<AppState>>) -> Vec<Summary> {
+    state.queue().list()
+}
+
+#[tauri::command]
+pub fn get_submission(state: State<'_, Arc<AppState>>, id: String) -> Option<Submission> {
+    state.queue().get(&id).map(|entry| entry.details)
+}
+
+/// False when the entry had already gone — swept, or entered on a second look.
+/// The window says so rather than reporting a removal that did not happen.
+#[tauri::command]
+pub fn mark_entered(state: State<'_, Arc<AppState>>, id: String) -> bool {
+    let removed = state.queue().remove(&id);
+    if removed {
+        info!("{id} entered");
+    }
+    removed
 }
 
 /// Background task dropping aged entries.
@@ -304,15 +317,6 @@ mod tests {
 
         assert_ne!(first, second);
         assert_eq!(queue.list().len(), 2);
-    }
-
-    #[test]
-    fn counting_agrees_with_the_list_it_no_longer_builds() {
-        let queue = Queue::new();
-        assert_eq!(queue.count(), 0);
-
-        queue.add(submission("Jane", "Doe"), None);
-        assert_eq!(queue.count(), queue.list().len());
     }
 
     #[test]

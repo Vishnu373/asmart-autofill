@@ -1,5 +1,5 @@
 {
-  "name": "@asmart/tray",
+  "name": "@asmart/desktop",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,10 +9,12 @@
   },
   "dependencies": {
     "@asmart/shared": "workspace:*",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
     "@tauri-apps/api": "^2.9.0",
-    "qrcode.react": "^4.2.0"
+    "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
+    "@tauri-apps/plugin-updater": "^2.10.1",
+    "qrcode.react": "^4.2.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@types/react": "^19.2.2",
