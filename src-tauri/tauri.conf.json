@@ -28,7 +28,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "createUpdaterArtifacts": false,
+    "createUpdaterArtifacts": true,
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"]
   },
   "plugins": {
@@ -36,7 +36,7 @@
       "endpoints": [
         "https://github.com/Vishnu373/asmart-autofill/releases/latest/download/latest.json"
       ],
-      "pubkey": ""
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYzQjhDMzYwNzVEN0EwQkMKUldTOG9OZDFZTU80ODFHWi9HbWNNbklWQ0NVSDFoSzUxbkF4ZmJ0a0cwRjJiZzFkY25IUXFINFIK"
     }
   }
 }
