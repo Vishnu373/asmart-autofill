@@ -6,7 +6,6 @@ import { send, type Outcome } from './api';
 type Status = Outcome['kind'] | 'sending';
 
 const INPUT_TYPE: Partial<Record<keyof Submission, string>> = {
-  date_of_birth: 'date',
   phone: 'tel',
   email: 'email',
 };
@@ -85,12 +84,9 @@ export function App() {
     <main>
       <h1>Your details</h1>
       <form onSubmit={onSubmit} noValidate>
-        {FIELDS.map(({ name, label, optional, options }) => (
+        {FIELDS.map(({ name, label, options }) => (
           <label key={name} htmlFor={name}>
-            <span>
-              {label}
-              {optional ? ' (optional)' : ''}
-            </span>
+            <span>{label}</span>
             {options ? (
               <select
                 id={name}
@@ -109,17 +105,31 @@ export function App() {
                 ))}
               </select>
             ) : (
-              <input
-                id={name}
-                name={name}
-                type={INPUT_TYPE[name] ?? 'text'}
-                value={values[name] ?? ''}
-                autoComplete="off"
-                aria-invalid={errors[name] ? true : undefined}
-                aria-describedby={errors[name] ? `${name}-error` : undefined}
-                onChange={(event) => change(name, event.target.value)}
-                onBlur={() => checkOne(name)}
-              />
+              <div className={name === 'date_of_birth' ? 'date-field' : undefined}>
+                <input
+                  id={name}
+                  name={name}
+                  type={INPUT_TYPE[name] ?? 'text'}
+                  placeholder={name === 'date_of_birth' ? 'YYYY-MM-DD' : undefined}
+                  inputMode={name === 'date_of_birth' ? 'numeric' : undefined}
+                  value={values[name] ?? ''}
+                  autoComplete="off"
+                  aria-invalid={errors[name] ? true : undefined}
+                  aria-describedby={errors[name] ? `${name}-error` : undefined}
+                  onChange={(event) => change(name, event.target.value)}
+                  onBlur={() => checkOne(name)}
+                />
+                {name === 'date_of_birth' && (
+                  <input
+                    className="picker"
+                    type="date"
+                    aria-label={`${label} calendar`}
+                    value={values[name] ?? ''}
+                    onChange={(event) => change(name, event.target.value)}
+                    onClick={(event) => event.currentTarget.showPicker?.()}
+                  />
+                )}
+              </div>
             )}
             {errors[name] && (
               <p className="error" id={`${name}-error`}>

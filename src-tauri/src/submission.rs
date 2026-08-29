@@ -51,6 +51,10 @@ impl Submission {
     fn validate_on(&self, today: Date) -> Result<(), ValidationError> {
         required("first_name", &self.first_name)?;
         required("last_name", &self.last_name)?;
+        required(
+            "preferred_name",
+            self.preferred_name.as_deref().unwrap_or_default(),
+        )?;
         required("address", &self.address)?;
         required("city", &self.city)?;
 
@@ -89,17 +93,16 @@ impl Submission {
             return Err(err("date_of_birth", "must not be in the future"));
         }
 
-        // Optional fields arrive as an empty string from a form field the patient
-        // left alone, which is an absent value rather than a bad one.
-        if let Some(email) = optional(&self.email)
-            && !is_email(email)
-        {
+        let email = required("email", self.email.as_deref().unwrap_or_default())?;
+        if !is_email(email) {
             return Err(err("email", "must look like name@example.com"));
         }
 
-        if let Some(version) = optional(&self.health_insurance_version)
-            && (version.len() != 2 || !version.bytes().all(|b| b.is_ascii_alphabetic()))
-        {
+        let version = required(
+            "health_insurance_version",
+            self.health_insurance_version.as_deref().unwrap_or_default(),
+        )?;
+        if version.len() != 2 || !version.bytes().all(|b| b.is_ascii_alphabetic()) {
             return Err(err("health_insurance_version", "must be two letters"));
         }
 
@@ -120,10 +123,6 @@ fn required<'a>(field: &'static str, value: &'a str) -> Result<&'a str, Validati
         return Err(err(field, "is required"));
     }
     Ok(value)
-}
-
-fn optional(value: &Option<String>) -> Option<&str> {
-    value.as_deref().map(str::trim).filter(|v| !v.is_empty())
 }
 
 fn digits(value: &str) -> String {
@@ -192,33 +191,45 @@ mod tests {
     }
 
     #[test]
-    fn the_optional_fields_may_be_missing() {
-        let submission = Submission {
-            preferred_name: None,
-            email: None,
-            health_insurance_version: None,
-            ..valid()
-        };
-        assert!(submission.validate_on(TODAY).is_ok());
+    fn a_missing_field_is_refused() {
+        type Blank = fn(&mut Submission);
+
+        let blanks: [(&str, Blank); 3] = [
+            ("preferred_name", |s| s.preferred_name = None),
+            ("email", |s| s.email = None),
+            ("health_insurance_version", |s| {
+                s.health_insurance_version = None
+            }),
+        ];
+
+        for (field, blank) in blanks {
+            let mut submission = valid();
+            blank(&mut submission);
+            assert_eq!(failing_field(submission), field);
+        }
     }
 
     #[test]
-    fn a_blank_optional_field_counts_as_missing() {
+    fn a_blank_field_counts_as_missing() {
         let submission = Submission {
             email: Some("  ".to_string()),
-            health_insurance_version: Some(String::new()),
             ..valid()
         };
-        assert!(submission.validate_on(TODAY).is_ok());
+        assert_eq!(failing_field(submission), "email");
     }
 
     #[test]
     fn every_required_field_is_required() {
         type Blank = fn(&mut Submission);
 
-        let blanks: [(&str, Blank); 10] = [
+        let blanks: [(&str, Blank); 13] = [
             ("first_name", |s| s.first_name = String::new()),
             ("last_name", |s| s.last_name = String::new()),
+            ("preferred_name", |s| s.preferred_name = Some(String::new())),
+            ("email", |s| s.email = Some(" ".to_string())),
+            ("health_insurance_version", |s| {
+                s.health_insurance_version = Some(String::new())
+            }),
             ("address", |s| s.address = String::new()),
             ("city", |s| s.city = " ".to_string()),
             ("province", |s| s.province = String::new()),

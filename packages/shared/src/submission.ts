@@ -44,22 +44,21 @@ export const PROVINCES: readonly Option[] = [
 export interface Field {
   name: keyof Submission;
   label: string;
-  optional?: true;
   options?: readonly Option[];
 }
 
 export const FIELDS: readonly Field[] = [
   { name: 'first_name', label: 'First name' },
   { name: 'last_name', label: 'Last name' },
-  { name: 'preferred_name', label: 'Preferred name', optional: true },
+  { name: 'preferred_name', label: 'Preferred name' },
   { name: 'address', label: 'Address' },
   { name: 'city', label: 'City' },
   { name: 'province', label: 'Province', options: PROVINCES },
   { name: 'postal_code', label: 'Postal code' },
   { name: 'phone', label: 'Phone number' },
-  { name: 'email', label: 'Email', optional: true },
+  { name: 'email', label: 'Email' },
   { name: 'date_of_birth', label: 'Date of birth' },
   { name: 'health_insurance_number', label: 'Health card number' },
-  { name: 'health_insurance_version', label: 'Health card version', optional: true },
+  { name: 'health_insurance_version', label: 'Health card version' },
   { name: 'hc_type', label: 'Health card province', options: PROVINCES },
 ];

@@ -9,16 +9,16 @@ import { App } from './App';
 const VALID: Submission = {
   first_name: 'Jane',
   last_name: 'Doe',
-  preferred_name: '',
+  preferred_name: 'Janie',
   address: '12 King St W',
   city: 'Toronto',
   province: 'ON',
   postal_code: 'M5H 1A1',
   phone: '4165551234',
-  email: '',
+  email: 'jane@example.com',
   date_of_birth: '1985-04-17',
   health_insurance_number: '1234567890',
-  health_insurance_version: '',
+  health_insurance_version: 'AB',
   hc_type: 'ON',
 };
 

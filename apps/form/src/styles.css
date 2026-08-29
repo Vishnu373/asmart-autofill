@@ -88,3 +88,28 @@ p[role='status'] {
   margin-top: 1.25rem;
   font-size: 1.1rem;
 }
+
+/* A typed date and the calendar, side by side: the box takes YYYY-MM-DD from the
+   keyboard, the square beside it opens the native picker. */
+.date-field {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.date-field .picker {
+  width: 3.5rem;
+  flex: none;
+  padding: 0;
+  overflow: hidden;
+}
+
+.date-field .picker::-webkit-datetime-edit,
+.date-field .picker::-webkit-inner-spin-button,
+.date-field .picker::-webkit-clear-button {
+  display: none;
+}
+
+.date-field .picker::-webkit-calendar-picker-indicator {
+  margin: 0 auto;
+  transform: scale(1.5);
+}

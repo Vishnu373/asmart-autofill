@@ -32,22 +32,25 @@ describe('validate', () => {
     expect(validate(valid(), TODAY)).toBeNull();
   });
 
-  it('allows the optional fields to be missing', () => {
-    const submission = valid();
-    delete submission.preferred_name;
-    delete submission.email;
-    delete submission.health_insurance_version;
-    expect(validate(submission, TODAY)).toBeNull();
+  it('refuses a missing field', () => {
+    for (const field of ['preferred_name', 'email', 'health_insurance_version'] as const) {
+      const submission = valid();
+      delete submission[field];
+      expect(validate(submission, TODAY)).toEqual({ field, reason: 'is required' });
+    }
   });
 
-  it('counts a blank optional field as missing', () => {
-    expect(validate({ ...valid(), email: '  ', health_insurance_version: '' }, TODAY)).toBeNull();
+  it('counts a blank field as missing', () => {
+    expect(failingField({ email: '  ' })).toBe('email');
   });
 
   it('requires every required field', () => {
     const blanks: Partial<Submission>[] = [
       { first_name: '' },
       { last_name: '' },
+      { preferred_name: '' },
+      { email: ' ' },
+      { health_insurance_version: '' },
       { address: '' },
       { city: ' ' },
       { province: '' },

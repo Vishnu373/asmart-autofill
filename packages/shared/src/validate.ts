@@ -15,8 +15,8 @@ export function validate(
   submission: Submission,
   today: number = todayUtc(),
 ): ValidationError | null {
-  for (const field of ['first_name', 'last_name', 'address', 'city'] as const) {
-    if (!required(submission[field])) {
+  for (const field of ['first_name', 'last_name', 'preferred_name', 'address', 'city'] as const) {
+    if (!required(submission[field] ?? '')) {
       return err(field, 'is required');
     }
   }
@@ -75,15 +75,19 @@ export function validate(
     return err('date_of_birth', 'must not be in the future');
   }
 
-  // Optional fields arrive as an empty string from a form field the patient
-  // left alone, which is an absent value rather than a bad one.
-  const email = optional(submission.email);
-  if (email !== null && !isEmail(email)) {
+  const email = required(submission.email ?? '');
+  if (!email) {
+    return err('email', 'is required');
+  }
+  if (!isEmail(email)) {
     return err('email', 'must look like name@example.com');
   }
 
-  const version = optional(submission.health_insurance_version);
-  if (version !== null && !/^[A-Za-z]{2}$/.test(version)) {
+  const version = required(submission.health_insurance_version ?? '');
+  if (!version) {
+    return err('health_insurance_version', 'is required');
+  }
+  if (!/^[A-Za-z]{2}$/.test(version)) {
     return err('health_insurance_version', 'must be two letters');
   }
 
@@ -103,10 +107,6 @@ function err(field: keyof Submission, reason: string): ValidationError {
 function required(value: string): string | null {
   const trimmed = value.trim();
   return trimmed === '' ? null : trimmed;
-}
-
-function optional(value: string | undefined): string | null {
-  return required(value ?? '');
 }
 
 function digits(value: string): string {
