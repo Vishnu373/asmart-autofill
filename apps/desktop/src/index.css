@@ -77,6 +77,77 @@ p {
   user-select: all;
 }
 
+/* Tabs */
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.tabs button {
+  padding: 0.45rem 0.8rem;
+  font: inherit;
+  font-size: 0.9rem;
+  color: inherit;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.tabs button:hover {
+  opacity: 1;
+}
+
+.tabs button[aria-current] {
+  font-weight: 600;
+  opacity: 1;
+  border-bottom-color: var(--accent);
+}
+
+/* Preview */
+
+.preview ol {
+  counter-reset: field;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.preview li {
+  counter-increment: field;
+  display: grid;
+  grid-template-columns: 1.5rem 1fr auto;
+  align-items: baseline;
+  gap: 0.1rem 0.6rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.preview li::before {
+  content: counter(field);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.45;
+}
+
+.tag {
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.choices {
+  grid-column: 2 / -1;
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  opacity: 0.55;
+}
+
 /* Waiting list */
 
 .waiting {

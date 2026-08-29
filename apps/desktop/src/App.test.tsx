@@ -114,6 +114,28 @@ describe('connecting a tablet', () => {
   });
 });
 
+describe('the two tabs', () => {
+  it('opens on the dashboard', async () => {
+    render(<App />);
+
+    expect(await screen.findByText(PAIRING.url)).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Dashboard' }).ariaCurrent).toBe('page');
+  });
+
+  it('shows the form fields in place of the dashboard, and comes back', async () => {
+    render(<App />);
+    await screen.findByText(PAIRING.url);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Form preview' }));
+    expect(screen.getByText('First name')).toBeDefined();
+    expect(screen.queryByText(PAIRING.url)).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Dashboard' }));
+    expect(screen.getByText(PAIRING.url)).toBeDefined();
+    expect(screen.queryByText('First name')).toBeNull();
+  });
+});
+
 describe('the waiting list', () => {
   it('says nobody is waiting rather than showing an empty list', async () => {
     render(<App />);

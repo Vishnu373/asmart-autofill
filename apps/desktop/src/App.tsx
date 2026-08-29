@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Connect } from './Connect';
 import { Detail } from './Detail';
 import { getPairingInfo, type PairingInfo } from './pairing';
+import { Preview } from './Preview';
 import { getSubmission, listWaiting, type Summary } from './queue';
 import { Updater } from './Updater';
 import { WaitingList, type Waiting } from './WaitingList';
@@ -15,12 +16,15 @@ interface Open {
   details: Submission;
 }
 
+type Tab = 'dashboard' | 'preview';
+
 export function App() {
   const [pairing, setPairing] = useState<PairingInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [waiting, setWaiting] = useState<Waiting>('asking');
   const [open, setOpen] = useState<Open | null>(null);
   const [expired, setExpired] = useState(false);
+  const [tab, setTab] = useState<Tab>('dashboard');
 
   const refreshPairing = useCallback(async () => {
     try {
@@ -101,10 +105,9 @@ export function App() {
     }
   }
 
-  return (
-    <main>
-      <h1>asmart-autofill</h1>
-      {open ? (
+  function dashboard() {
+    if (open) {
+      return (
         <Detail
           entry={open.entry}
           details={open.details}
@@ -114,17 +117,37 @@ export function App() {
             setExpired(true);
           }}
         />
-      ) : (
-        <>
-          <Connect pairing={pairing} error={error} />
-          {expired && (
-            <p className="expired" role="status">
-              That submission is no longer waiting.
-            </p>
-          )}
-          <WaitingList waiting={waiting} onOpen={(id) => void show(id)} />
-        </>
-      )}
+      );
+    }
+    return (
+      <>
+        <Connect pairing={pairing} error={error} />
+        {expired && (
+          <p className="expired" role="status">
+            That submission is no longer waiting.
+          </p>
+        )}
+        <WaitingList waiting={waiting} onOpen={(id) => void show(id)} />
+      </>
+    );
+  }
+
+  return (
+    <main>
+      <h1>asmart-autofill</h1>
+      <nav className="tabs">
+        {(['dashboard', 'preview'] as const).map((name) => (
+          <button
+            key={name}
+            type="button"
+            aria-current={tab === name ? 'page' : undefined}
+            onClick={() => setTab(name)}
+          >
+            {name === 'dashboard' ? 'Dashboard' : 'Form preview'}
+          </button>
+        ))}
+      </nav>
+      {tab === 'preview' ? <Preview /> : dashboard()}
       <Updater />
     </main>
   );
