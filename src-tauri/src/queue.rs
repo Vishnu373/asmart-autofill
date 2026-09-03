@@ -10,13 +10,11 @@ use tracing::info;
 use crate::state::AppState;
 use crate::submission::Submission;
 
-/// Emitted to the tray whenever the waiting list changes.
 pub const QUEUE_CHANGED: &str = "queue-changed";
 
 const RETENTION: Duration = Duration::hours(2);
 const SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// One waiting patient.
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub id: String,
@@ -24,17 +22,13 @@ pub struct Entry {
     pub submitted_at: OffsetDateTime,
 }
 
-/// What the waiting list shows: names and times only.
 #[derive(Clone, Debug, Serialize)]
 pub struct Summary {
     pub id: String,
     pub name: String,
-    /// RFC 3339, UTC.
     pub submitted_at: String,
 }
 
-/// The idempotency key is kept beside its entry rather than in a map of its
-/// own, so a key stops being honoured exactly when its entry leaves.
 struct Record {
     entry: Entry,
     idempotency_key: Option<String>,
@@ -51,20 +45,16 @@ impl Queue {
         Self::default()
     }
 
-    /// Called after every change, so the tray is told rather than left asking.
     pub fn set_on_change(&self, notify: impl Fn() + Send + Sync + 'static) {
         *self.on_change.lock().unwrap() = Some(Box::new(notify));
     }
 
-    /// Callers release the records lock first: the listener reads the queue back.
     fn changed(&self) {
         if let Some(notify) = self.on_change.lock().unwrap().as_ref() {
             notify();
         }
     }
 
-    /// Returns the id. With an idempotency key already seen, returns the id of
-    /// the existing entry instead of enqueuing a second one.
     pub fn add(&self, details: Submission, idempotency_key: Option<&str>) -> String {
         self.add_at(details, idempotency_key, OffsetDateTime::now_utc())
     }
@@ -106,7 +96,6 @@ impl Queue {
         id
     }
 
-    /// Newest first.
     pub fn list(&self) -> Vec<Summary> {
         let records = self.records.lock().unwrap();
         let mut entries: Vec<_> = records.iter().map(|record| &record.entry).collect();
@@ -133,7 +122,6 @@ impl Queue {
             .map(|record| record.entry.clone())
     }
 
-    /// True when an entry was actually removed.
     pub fn remove(&self, id: &str) -> bool {
         let mut records = self.records.lock().unwrap();
         let before = records.len();
@@ -147,7 +135,6 @@ impl Queue {
         removed
     }
 
-    /// Drops entries older than the retention window. Returns how many went.
     pub fn sweep(&self, now: OffsetDateTime) -> usize {
         let mut records = self.records.lock().unwrap();
         let before = records.len();
@@ -162,8 +149,6 @@ impl Queue {
     }
 }
 
-/// Whole seconds: the list only ever shows a time of day, and the trailing
-/// nanoseconds would be the only part of the payload nobody reads.
 fn format_utc(at: OffsetDateTime) -> String {
     at.replace_nanosecond(0)
         .unwrap_or(at)
@@ -188,8 +173,6 @@ pub fn get_submission(state: State<'_, Arc<AppState>>, id: String) -> Option<Sub
     state.queue().get(&id).map(|entry| entry.details)
 }
 
-/// False when the entry had already gone — swept, or entered on a second look.
-/// The window says so rather than reporting a removal that did not happen.
 #[tauri::command]
 pub fn mark_entered(state: State<'_, Arc<AppState>>, id: String) -> bool {
     let removed = state.queue().remove(&id);
@@ -199,7 +182,6 @@ pub fn mark_entered(state: State<'_, Arc<AppState>>, id: String) -> bool {
     removed
 }
 
-/// Background task dropping aged entries.
 pub fn spawn_sweeper(queue: Arc<Queue>) {
     tauri::async_runtime::spawn(async move {
         let mut ticker = tokio::time::interval(SWEEP_INTERVAL);
@@ -216,9 +198,7 @@ pub fn spawn_sweeper(queue: Arc<Queue>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use std::sync::atomic::{AtomicUsize, Ordering};
-
     use time::macros::datetime;
 
     fn submission(first_name: &str, last_name: &str) -> Submission {

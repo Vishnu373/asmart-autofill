@@ -147,6 +147,10 @@ export function App() {
           {MESSAGE[status]}
         </p>
       )}
+      <p className="disclaimer">
+        By submitting, you confirm these details are correct. They go only to the front desk at
+        this clinic — nothing is sent over the internet.
+      </p>
     </main>
   );
 }

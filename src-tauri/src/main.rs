@@ -70,8 +70,6 @@ fn init(app: &mut tauri::App) -> Result<(), SetupError> {
     Ok(())
 }
 
-/// A release build has no console, so a startup failure that only panics is
-/// invisible. Say it in the log, then in a box the front desk cannot miss.
 fn fatal(app: &tauri::AppHandle, e: &SetupError) -> ! {
     error!(error = %e, "startup failed");
 

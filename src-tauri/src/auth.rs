@@ -2,7 +2,6 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 use std::sync::Arc;
-
 use axum::extract::{Request, State};
 use axum::http::{StatusCode, header::AUTHORIZATION};
 use axum::middleware::Next;
@@ -11,7 +10,6 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use subtle::ConstantTimeEq;
 use tracing::warn;
-
 use crate::state::AppState;
 
 const TOKEN_FILE: &str = "pairing-token";

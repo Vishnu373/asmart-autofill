@@ -89,6 +89,13 @@ p[role='status'] {
   font-size: 1.1rem;
 }
 
+.disclaimer {
+  margin-top: 1.5rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: #52646f;
+}
+
 /* A typed date and the calendar, side by side: the box takes YYYY-MM-DD from the
    keyboard, the square beside it opens the native picker. */
 .date-field {
