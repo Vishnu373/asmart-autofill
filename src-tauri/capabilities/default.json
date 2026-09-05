@@ -9,6 +9,7 @@
     "allow-list-waiting",
     "allow-get-submission",
     "allow-mark-entered",
+    "allow-delete-submissions",
     "clipboard-manager:allow-write-text",
     "updater:default"
   ]

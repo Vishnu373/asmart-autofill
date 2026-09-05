@@ -1,3 +1,4 @@
+use std::io;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -6,6 +7,7 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use tokio::sync::oneshot;
 
 use crate::queue::Queue;
+use crate::store::Store;
 
 pub struct AppState {
     port: AtomicU16,
@@ -16,13 +18,25 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// In-memory only, so the router tests need no disk. The application
+    /// always goes through `restored`.
+    #[cfg(test)]
     pub fn new(token: String) -> Arc<Self> {
+        Self::build(token, Queue::new())
+    }
+
+    /// The startup path: the queue is whatever the last run left on disk.
+    pub fn restored(token: String, store: Store) -> io::Result<Arc<Self>> {
+        Ok(Self::build(token, Queue::restored(store)?))
+    }
+
+    fn build(token: String, queue: Queue) -> Arc<Self> {
         Arc::new(Self {
             port: AtomicU16::new(0),
             shutdown: Mutex::new(None),
             token,
             address: Mutex::new(None),
-            queue: Arc::new(Queue::new()),
+            queue: Arc::new(queue),
         })
     }
 

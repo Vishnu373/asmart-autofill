@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,6 +9,7 @@ const getPairingInfo = vi.hoisted(() => vi.fn());
 const listWaiting = vi.hoisted(() => vi.fn());
 const getSubmission = vi.hoisted(() => vi.fn());
 const markEntered = vi.hoisted(() => vi.fn());
+const deleteSubmissions = vi.hoisted(() => vi.fn());
 const writeText = vi.hoisted(() => vi.fn());
 const check = vi.hoisted(() => vi.fn());
 
@@ -16,12 +17,24 @@ vi.mock('@tauri-apps/api/event', () => ({ listen }));
 vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({ writeText }));
 vi.mock('@tauri-apps/plugin-updater', () => ({ check }));
 vi.mock('./pairing', () => ({ getPairingInfo }));
-vi.mock('./queue', () => ({ listWaiting, getSubmission, markEntered }));
+vi.mock('./queue', () => ({ listWaiting, getSubmission, markEntered, deleteSubmissions }));
 
 const PAIRING = { url: 'http://192.168.1.20:8787/?t=abc', token: 'abc', port: 8787 };
 
-const JANE = { id: 'a3f9', name: 'Jane Doe', submitted_at: '2026-08-13T14:12:04Z' };
-const JOHN = { id: 'b71c', name: 'John Roe', submitted_at: '2026-08-13T14:09:00Z' };
+/**
+ * Fixtures are dated against the clock the test runs on, not a fixed day: a
+ * record from before today sets off the end-of-day prompt, which would then sit
+ * over every other test in this file.
+ */
+function on(daysAgo: number, hour: number, minute: number): string {
+  const at = new Date();
+  at.setDate(at.getDate() - daysAgo);
+  at.setHours(hour, minute, 0, 0);
+  return at.toISOString();
+}
+
+const JANE = { id: 'a3f9', name: 'Jane Doe', submitted_at: on(0, 14, 12), entered_at: null };
+const JOHN = { id: 'b71c', name: 'John Roe', submitted_at: on(0, 14, 9), entered_at: null };
 
 const DETAILS = {
   first_name: 'Jane',
@@ -52,6 +65,7 @@ beforeEach(() => {
   listWaiting.mockResolvedValue([]);
   getSubmission.mockResolvedValue(DETAILS);
   markEntered.mockResolvedValue(true);
+  deleteSubmissions.mockResolvedValue(1);
   writeText.mockResolvedValue(undefined);
   // No update, and no network call, unless a test says otherwise.
   check.mockResolvedValue(null);
@@ -59,6 +73,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.useRealTimers();
 });
 
 describe('connecting a tablet', () => {
@@ -217,13 +232,84 @@ describe('one patient', () => {
     expect(screen.queryByRole('button', { name: 'Copy Preferred name' })).toBeNull();
   });
 
-  it('drops the entry when it is marked as entered', async () => {
+  it('keeps the record, in a section of its own, once it is marked as entered', async () => {
     await open();
+    listWaiting.mockResolvedValue([{ ...JANE, entered_at: on(0, 14, 20) }]);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Mark as entered' }));
+    handlerFor('queue-changed')();
+
+    expect(markEntered).toHaveBeenCalledWith('a3f9');
+    expect(await screen.findByText('1 entered — not yet deleted')).toBeDefined();
+    expect(screen.getByText('No one waiting.')).toBeDefined();
+  });
+
+  it('offers no second Mark as entered, and says when it happened', async () => {
+    listWaiting.mockResolvedValue([{ ...JANE, entered_at: on(0, 14, 20) }]);
+    render(<App />);
+    await userEvent.click(await screen.findByRole('button', { name: /Jane Doe/ }));
+
+    expect(await screen.findByText(/Still on this computer until deleted/)).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Mark as entered' })).toBeNull();
+  });
+
+  it('deletes one record from its own view, once the confirm is answered', async () => {
+    await open();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete record' }));
+    expect(deleteSubmissions).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete permanently' }));
+
+    expect(deleteSubmissions).toHaveBeenCalledWith(['a3f9']);
+    expect(await screen.findByText(PAIRING.url)).toBeDefined();
+  });
+
+  it('says so when the entered stamp could not be saved', async () => {
+    await open();
+    markEntered.mockRejectedValue('store write failed');
 
     await userEvent.click(screen.getByRole('button', { name: 'Mark as entered' }));
 
-    expect(markEntered).toHaveBeenCalledWith('a3f9');
-    expect(await screen.findByText(PAIRING.url)).toBeDefined();
+    expect(
+      await screen.findByText('That did not work. The record is not marked as entered.'),
+    ).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Mark as entered' })).toBeDefined();
+  });
+
+  it('says so when a delete could not be written, and leaves the confirm up', async () => {
+    await open();
+    deleteSubmissions.mockRejectedValue('store write failed');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete record' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete permanently' }));
+
+    expect(
+      await screen.findByText('That did not work. The record is still on this computer.'),
+    ).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Delete permanently' })).toBeDefined();
+  });
+
+  it('does not announce a deletion the staff member just asked for', async () => {
+    await open();
+    // The queue-changed refresh can land before the delete command returns, and
+    // the record vanishing then is not news to whoever pressed the button.
+    let finish: (removed: number) => void = () => {};
+    deleteSubmissions.mockReturnValue(
+      new Promise<number>((resolve) => {
+        finish = resolve;
+      }),
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete record' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete permanently' }));
+
+    listWaiting.mockResolvedValue([]);
+    handlerFor('queue-changed')();
+    await screen.findByText('No one waiting.');
+
+    expect(screen.queryByText('That record has been deleted.')).toBeNull();
+    await act(async () => finish(1));
   });
 
   it('says so when the entry had already gone', async () => {
@@ -232,17 +318,117 @@ describe('one patient', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Mark as entered' }));
 
-    expect(await screen.findByText('That submission is no longer waiting.')).toBeDefined();
+    expect(await screen.findByText('That record has been deleted.')).toBeDefined();
   });
 
-  it('returns to the list when the entry expires while it is open', async () => {
+  it('returns to the list when the record is deleted while it is open', async () => {
     await open();
 
     listWaiting.mockResolvedValue([]);
     handlerFor('queue-changed')();
 
-    expect(await screen.findByText('That submission is no longer waiting.')).toBeDefined();
+    expect(await screen.findByText('That record has been deleted.')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Mark as entered' })).toBeNull();
+  });
+});
+
+describe("deleting yesterday's records", () => {
+  const ENTERED = {
+    id: 'c0de',
+    name: 'Amir Khan',
+    submitted_at: on(1, 16, 40),
+    entered_at: on(1, 16, 45),
+  };
+  const NEVER_ENTERED = {
+    id: 'd1ce',
+    name: 'Mia Chen',
+    submitted_at: on(1, 23, 10),
+    entered_at: null,
+  };
+
+  it('asks at launch when something from before today is still held', async () => {
+    listWaiting.mockResolvedValue([ENTERED]);
+    render(<App />);
+
+    expect(await screen.findByRole('dialog')).toBeDefined();
+    expect(screen.getByText('Time to delete records from yesterday')).toBeDefined();
+    expect(screen.getByText('1 record from before today is still on this computer.')).toBeDefined();
+  });
+
+  it('stays out of the way when everything is from today', async () => {
+    listWaiting.mockResolvedValue([JANE, JOHN]);
+    render(<App />);
+    await screen.findByText('2 patients waiting');
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('deletes exactly the records it named, and nothing from today', async () => {
+    listWaiting.mockResolvedValue([JANE, ENTERED]);
+    render(<App />);
+    await screen.findByRole('dialog');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    expect(deleteSubmissions).toHaveBeenCalledWith(['c0de']);
+  });
+
+  it('names the ones nobody entered and takes a second confirm for them', async () => {
+    listWaiting.mockResolvedValue([ENTERED, NEVER_ENTERED]);
+    render(<App />);
+    await screen.findByRole('dialog');
+
+    expect(screen.getByText('1 of them was never marked as entered.')).toBeDefined();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(deleteSubmissions).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete anyway' }));
+    expect(deleteSubmissions).toHaveBeenCalledWith(['c0de', 'd1ce']);
+  });
+
+  it('keeps the prompt up, and says so, when the delete could not be written', async () => {
+    listWaiting.mockResolvedValue([ENTERED]);
+    deleteSubmissions.mockRejectedValue('store write failed');
+    render(<App />);
+    await screen.findByRole('dialog');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    expect(await screen.findByText(/The records are still on this computer/)).toBeDefined();
+    expect(screen.getByRole('dialog')).toBeDefined();
+  });
+
+  it('asks again the next morning, without the window being restarted', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    listWaiting.mockResolvedValue([ENTERED]);
+    render(<App />);
+    await screen.findByRole('dialog');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    vi.setSystemTime(new Date(Date.now() + 24 * 60 * 60 * 1000));
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+    });
+
+    expect(screen.getByRole('dialog')).toBeDefined();
+  });
+
+  it('deletes nothing on cancel, and does not ask again that day', async () => {
+    listWaiting.mockResolvedValue([ENTERED]);
+    render(<App />);
+    await screen.findByRole('dialog');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(deleteSubmissions).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    handlerFor('queue-changed')();
+    await waitFor(() => expect(listWaiting).toHaveBeenCalledTimes(2));
+
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
 

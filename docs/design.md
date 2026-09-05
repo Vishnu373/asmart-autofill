@@ -36,7 +36,7 @@ This replaces that with a form on a tablet at the front desk. The patient fills 
 
 The tablet and the computer are ten metres apart on the same WiFi. Patient details never need to leave the building, so nothing here goes to the internet.
 
-A desktop application on the front desk computer is the whole product and the source of truth. It serves the form to the tablet, receives the submission, holds it, and shows it to staff a field at a time. There is no cloud service, no database, and no account to sign into.
+A desktop application on the front desk computer is the whole product and the source of truth. It serves the form to the tablet, receives the submission, holds it, and shows it to staff a field at a time. There is no cloud service, no database, and no account to sign into. What it holds is written to one encrypted file on that same computer and stays there until a staff member deletes it.
 
 The application exists because a browser tab cannot accept an incoming connection — it can only make outgoing ones. For the tablet to send anything to the computer, something on that computer has to be listening at an address. That is the application's job.
 
@@ -47,9 +47,9 @@ The only things the application sends to the internet are the update check and e
 | Part | Choice |
 |---|---|
 | Desktop application | Tauri |
-| Backend / Application core | Rust — the HTTP server and the in-memory queue |
+| Backend / Application core | Rust — the HTTP server, the queue, and the encrypted record file |
 | Frontend / Patient form, desktop window | React + TypeScript |
-| Storage | None — submissions are held in memory |
+| Storage | One DPAPI-encrypted file on the front desk computer |
 | Transport | HTTP over the clinic LAN |
 | Updates | Tauri's updater |
 
@@ -99,9 +99,19 @@ The only things the application sends to the internet are the update check and e
 
 ### After it's entered
 
-18. The staff member clicks **Mark as entered**, which drops the submission from memory and returns to the list.
-19. Anything not entered within 2 hours is dropped automatically. If that happens while the patient is open, the window says so rather than showing details that no longer belong to anyone.
-20. Closing the application, or restarting the computer, drops everything waiting.
+18. The staff member clicks **Mark as entered**, which stamps the record with the time and moves it out of the waiting list into a list of records already in the EMR. It is not deleted.
+19. Nothing is ever deleted by the clock. A record leaves the computer when a staff member says so, and not before.
+20. Every record survives closing the application and restarting the computer.
+
+### Deleting
+
+21. Any record can be deleted from its own view at any time, entered or not. It takes one confirm, because it cannot be undone.
+22. The first time each day that the window sees a record submitted before today, it asks: **Time to delete records from yesterday**, with **Delete** and **Cancel**. Each day, not each launch — a front desk that leaves the window open all week is still asked every morning.
+23. "Yesterday" is the calendar day on the wall, not 24 hours elapsed — that is the rule a staff member can check against a clock without doing arithmetic.
+24. The prompt says how many of those records were never marked as entered, and takes a second confirm before deleting any of them. Deleting a patient nobody copied into the EMR is the one way this prompt can lose someone.
+25. **Cancel** deletes nothing and is not asked again that day.
+26. Deleting removes the record from the file for good. One line goes into the log — the id and the time, never a field.
+27. A deletion that cannot be written to disk fails in front of the staff member rather than quietly. The records stay where they are and the window says so, because a delete reported as done and then undone by a restart is worse than one that visibly did not happen.
 
 ## Non-Functional Requirements
 
@@ -148,7 +158,7 @@ sequenceDiagram
     P->>T: Presses Submit
     T->>T: Checks the details look valid
     T->>A: Sends the details over the LAN
-    A->>A: Holds it in memory
+    A->>A: Writes it to the encrypted file
     A-->>T: Confirms it was received
     T->>P: Clears to a blank form
     A->>W: Emits queue-changed
@@ -176,14 +186,15 @@ sequenceDiagram
 
     St->>O: Checks it over, fixes anything, saves
     St->>W: Clicks Mark as entered
-    W->>A: Drops it from memory
+    W->>A: Stamps it entered — the record stays
+    Note over St,A: Next morning, the window offers to delete<br/>everything from before today
 ```
 
 ## Local API
 
 Everything the application serves, which is now only what the tablet needs. It listens on one port on the LAN address.
 
-The window is the application's own frontend and does not go through HTTP at all — it calls into the core directly (`list_waiting`, `get_submission`, `mark_entered`, `get_pairing_info`) and is told about changes by event. That is why the waiting list is not reachable over the network by anything, which is a stronger position than v1's origin check ever was.
+The window is the application's own frontend and does not go through HTTP at all — it calls into the core directly (`list_waiting`, `get_submission`, `mark_entered`, `delete_submissions`, `get_pairing_info`) and is told about changes by event. That is why the waiting list is not reachable over the network by anything, which is a stronger position than v1's origin check ever was.
 
 ### For the tablet
 
@@ -223,17 +234,29 @@ POST /api/submissions
 
 ## Data
 
-Nothing is written to disk. A submission is a record in memory that lives from the moment the patient presses submit to the moment staff saves in OSCAR — usually a minute or two.
+One file, `%LOCALAPPDATA%\com.asmart.autofill\queue.dat`, holding every record the clinic has not deleted. Local, not roaming: Windows does not sync that folder to OneDrive or to another machine the staff account signs into.
 
 | Field | Notes |
 |---|---|
 | `id` | Generated on receipt. |
 | `details` | The 13 fields. |
 | `submitted_at` | When the patient pressed Submit. |
+| `entered_at` | When staff marked it entered, or absent. |
+| `idempotency_key` | The tablet's key for the submission, so a retry across a restart is still one patient. |
 
-It leaves memory when staff marks it entered, when two hours pass, or when the application stops. There is no database to back up, no history to protect, and nothing the application itself writes to disk.
+A record leaves the file only when a staff member deletes it. Nothing expires.
 
-The clipboard is the exception, and it is worth being honest about it. Copying a field puts that value — a health card number included — on the Windows clipboard, where it outlives the two-hour window entirely. With Clipboard History (Win+V) on, the last twenty-five values persist; with Cloud Clipboard on, they sync to whatever Microsoft account is signed in, which is the one path by which a patient's details can leave the clinic. Both are off by default on a fresh Windows install and both are Group Policy settings, so the deployment note is to leave them off rather than to work around them in the application.
+**Encrypted with DPAPI.** The file is sealed with `CryptProtectData` under the Windows account the application runs as, with an application-specific entropy value mixed into the key. Copied to another computer, or opened under another Windows account, it does not decrypt. There is no key to store, back up, or lose — which is the whole reason for choosing DPAPI over a passphrase the clinic would write on a sticky note.
+
+What it does not protect against: anything already running as that staff account, which can ask DPAPI to unseal the file exactly as the application does. This raises the bar from "any file copy is a breach" to "you must already be that user on that machine". It is not a substitute for the clinic securing the front desk login.
+
+**Written atomically.** Each change is written to a temporary file, flushed to the drive, and renamed over the real one. A crash partway through a direct write would leave bytes that decrypt to nothing, losing every record rather than the one being added. The flush is the half that is easy to skip: the rename swaps the names atomically but does not push the bytes out of the cache, so without it a power cut can leave the real name pointing at a short file — which is the same loss, arrived at by a longer route.
+
+**Deletion is written before it is believed.** The new contents reach the file first; only then does the record leave memory, and only then does the window hear that it worked. If that write fails the record is still held, and the staff member is told. Additions take the opposite trade — a failed write is logged and the patient is kept in memory — because turning someone away at the desk over a disk fault helps nobody, while a deletion that reverses itself overnight is exactly the failure the whole feature exists to prevent.
+
+**A file that will not read is a startup failure**, not an empty queue. Carrying on empty would have the first write of the day replace patients nobody has entered yet, so the application shows the error dialog and stops instead. The dialog names the file and says to move it aside, because DPAPI stops decrypting for good once an administrator resets the account password or rebuilds the profile — and without that sentence the operator is left with an application that will not start and no way to find out why.
+
+The clipboard is the exception, and it is worth being honest about it. Copying a field puts that value — a health card number included — on the Windows clipboard, which nothing in this application controls or clears. With Clipboard History (Win+V) on, the last twenty-five values persist; with Cloud Clipboard on, they sync to whatever Microsoft account is signed in, which is the one path by which a patient's details can leave the clinic. Both are off by default on a fresh Windows install and both are Group Policy settings, so the deployment note is to leave them off rather than to work around them in the application.
 
 ## Observability
 
@@ -247,15 +270,19 @@ One line per event, not per request. A clinic registers forty or fifty patients 
 | `startup failed` | Setup did not finish. Carries the error and is followed by a dialog. |
 | `form served` | The form went to a tablet. Carries the tablet's `ip`. |
 | `form refused` | `GET /` arrived without a usable token. Carries `ip` and whether the token was missing or wrong. |
+| `store loaded` | The record file was read at startup. Carries how many records it held. |
+| `store write failed` | An addition could not be written to disk. Carries the error; the record is still in memory. |
+| `delete not written; the records are still held` | A deletion could not be written to disk. Carries the error; nothing was removed and the window was told. |
 | `{id} received` | A submission was queued. |
 | `submission failed` | A submission was rejected. Carries the reason. |
 | `{id} entered` | Staff marked the submission entered in the window. |
+| `{id} deleted` | Staff deleted the record. The file no longer holds it. |
 
-`{id} received` and `{id} entered` are the pair that matters: one day's log read top to bottom shows which patients made it into the EMR and which were dropped.
+`{id} received`, `{id} entered` and `{id} deleted` are the three that matter: one day's log read top to bottom shows which patients made it into the EMR, and when each record left the computer. Deletion being manual is a claim the clinic will have to make about its own handling of patient data; this log line is what makes it a claim they can show rather than one they assert.
 
 Where a function returns an error, its own message is logged verbatim rather than a sentence written here. Where nothing returns an error — a token that fails a byte compare, a counter passing the rate limit — the observed values are logged instead (`token=missing`, `count=13 limit=10`).
 
-**What is never logged:** any field the patient typed. The queue drops a submission after two hours precisely so no health card number outlives the visit; a log file that never expires would undo that. Rejections name the field, never its value.
+**What is never logged:** any field the patient typed. Records are meant to be deleted daily; a log file that never expires would keep a copy of what was deleted, which would undo the deletion. Rejections name the field, never its value.
 
 **What cannot be logged:** a scan that never reaches the machine. A tablet on the wrong network or a blocked firewall port produces no packet, so there is nothing to write — the failure looks identical to nobody scanning. That case is addressed in the window, not here.
 
@@ -277,11 +304,17 @@ Patient details never leave the clinic, which removes the data residency questio
 
 **The cost:** is that you have software installed on a hundred different Windows machines instead of one server you control, and you are blind to what happens on them beyond what error reporting tells you.
 
-### 2. Held in memory rather than a database
+### 2. Kept on disk until staff delete it, rather than expiring on a timer
 
-The data lives about ninety seconds. A database would mean health card numbers on disk, a file to back up, and a file to protect, all to survive a crash during a window where the patient is still standing at the desk and can be asked again.
+**Chosen:** every record is written to an encrypted file and stays there until a staff member deletes it. The window offers to clear yesterday's once each day.
 
-**The cost:** restart the computer with three patients waiting and those three fill the form again.
+Earlier versions held everything in memory and swept anything older than two hours. That was the safest possible position on retention — a health card number could not outlive the visit because there was nowhere for it to live — but it made the application lose patients for reasons the front desk could not control. A reboot during a busy morning, a crash, a power cut, or simply nobody getting to the queue within two hours, and the patient standing at the desk had to fill the form again. It also meant staff had no way to check yesterday's work.
+
+**The cost, stated plainly:** health card numbers, names and dates of birth now sit on a clinic PC, and how long they sit there is a matter of staff habit rather than a timer. If nobody ever presses Delete, nothing is ever deleted. That is a real change in what the clinic is holding, and it is why deletion is prompted daily, why the prompt names records nobody entered before destroying them, and why every deletion is logged.
+
+DPAPI is what keeps the cost bounded: the file is worthless off that machine and under any other account. It does not defend against whoever is already logged in at the front desk, and nothing in this design pretends otherwise — see [Data](#data).
+
+**When this changes:** if a clinic asks for a retention policy stronger than a daily prompt, the answer is a configurable maximum age that deletes without asking, with the prompt kept for anything younger.
 
 ### 3. HTTP for now
 
@@ -369,7 +402,7 @@ A machine does not have one IP address — it has one per network interface. A t
 
 ### 5. Log retention by importance, not by age
 
-**Where this stands today.** Logging rolls to a new file each day and keeps every one of them. Nothing prunes. A machine that has run for a year holds a year of files, the oldest still describing what happened on day one.
+**Where this stands today.** Logging rolls to a new file each day and keeps every one of them. Nothing prunes. A machine that has run for a year holds a year of files, the oldest still describing what happened on day one. The log now also records `{id} deleted`, which is the line a clinic would want to keep longest and the routine traffic around it that is worth dropping first.
 
 **The obvious fix, and why it is not the one wanted.** `tracing-appender` takes a `max_log_files` cap: on each rotation the oldest file is deleted. One argument, no moving parts. But it discards by age alone, so a genuine startup failure from three weeks ago is thrown away at exactly the same moment as three weeks of routine "listening on 0.0.0.0" lines. The information worth keeping is the rarest, and an age cap is blind to that.
 

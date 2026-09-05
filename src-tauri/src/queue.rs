@@ -1,25 +1,32 @@
 use std::cmp::Reverse;
+use std::io;
 use std::sync::{Arc, Mutex};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
+use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
-use time::{Duration, OffsetDateTime};
-use tracing::info;
+use tracing::{error, info};
 
 use crate::state::AppState;
+use crate::store::Store;
 use crate::submission::Submission;
 
 pub const QUEUE_CHANGED: &str = "queue-changed";
 
-const RETENTION: Duration = Duration::hours(2);
-const SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
-
-#[derive(Clone, Debug)]
-pub struct Entry {
+/// One patient, from the moment they press Submit until a staff member deletes
+/// them. Nothing here expires on its own.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Record {
     pub id: String,
     pub details: Submission,
+    #[serde(with = "time::serde::rfc3339")]
     pub submitted_at: OffsetDateTime,
+    /// When staff copied it into the EMR. Entering and deleting are separate
+    /// now, so an entered record stays on disk until someone removes it.
+    #[serde(with = "time::serde::rfc3339::option", default)]
+    pub entered_at: Option<OffsetDateTime>,
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -27,22 +34,36 @@ pub struct Summary {
     pub id: String,
     pub name: String,
     pub submitted_at: String,
-}
-
-struct Record {
-    entry: Entry,
-    idempotency_key: Option<String>,
+    pub entered_at: Option<String>,
 }
 
 #[derive(Default)]
 pub struct Queue {
     records: Mutex<Vec<Record>>,
     on_change: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    /// Absent in tests, which have no business writing to a disk.
+    store: Option<Store>,
 }
 
 impl Queue {
+    /// In-memory only, and so only ever what a test wants — the application
+    /// always goes through `restored`.
+    #[cfg(test)]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Startup: pick up whatever the last run left behind. A store that will
+    /// not read is an error rather than an empty queue, because the first write
+    /// after that would replace patients nobody has entered yet.
+    pub fn restored(store: Store) -> io::Result<Self> {
+        let records = store.load()?;
+        info!(records = records.len(), "store loaded");
+        Ok(Self {
+            records: Mutex::new(records),
+            on_change: Mutex::new(None),
+            store: Some(store),
+        })
     }
 
     pub fn set_on_change(&self, notify: impl Fn() + Send + Sync + 'static) {
@@ -52,6 +73,24 @@ impl Queue {
     fn changed(&self) {
         if let Some(notify) = self.on_change.lock().unwrap().as_ref() {
             notify();
+        }
+    }
+
+    /// Called holding the lock, so two writes cannot interleave into one file.
+    fn write(&self, records: &[Record]) -> io::Result<()> {
+        match &self.store {
+            Some(store) => store.save(records),
+            None => Ok(()),
+        }
+    }
+
+    /// For a change that adds something. A failure is logged and swallowed: the
+    /// record is already in memory, and turning a patient away over a disk fault
+    /// the front desk cannot fix is worse than running until someone reads the
+    /// log. Deletion cannot borrow this reasoning — see `delete`.
+    fn persist(&self, records: &[Record]) {
+        if let Err(e) = self.write(records) {
+            error!(error = %e, "store write failed");
         }
     }
 
@@ -72,80 +111,106 @@ impl Queue {
                 .iter()
                 .find(|record| record.idempotency_key.as_deref() == Some(key))
         {
-            return seen.entry.id.clone();
+            return seen.id.clone();
         }
 
         let id = loop {
             let id = generate_id();
-            if !records.iter().any(|record| record.entry.id == id) {
+            if !records.iter().any(|record| record.id == id) {
                 break id;
             }
         };
 
         records.push(Record {
-            entry: Entry {
-                id: id.clone(),
-                details,
-                submitted_at: now,
-            },
+            id: id.clone(),
+            details,
+            submitted_at: now,
+            entered_at: None,
             idempotency_key: idempotency_key.map(str::to_string),
         });
+        self.persist(&records);
         drop(records);
 
         self.changed();
         id
     }
 
+    /// Everything held, newest first. Entered and not-yet-entered are told
+    /// apart by `entered_at` rather than by being in different lists, so the
+    /// window decides how to group them.
     pub fn list(&self) -> Vec<Summary> {
         let records = self.records.lock().unwrap();
-        let mut entries: Vec<_> = records.iter().map(|record| &record.entry).collect();
-        entries.sort_by_key(|entry| Reverse(entry.submitted_at));
-        entries
+        let mut sorted: Vec<_> = records.iter().collect();
+        sorted.sort_by_key(|record| Reverse(record.submitted_at));
+        sorted
             .into_iter()
-            .map(|entry| Summary {
-                id: entry.id.clone(),
+            .map(|record| Summary {
+                id: record.id.clone(),
                 name: format!(
                     "{} {}",
-                    entry.details.first_name.trim(),
-                    entry.details.last_name.trim()
+                    record.details.first_name.trim(),
+                    record.details.last_name.trim()
                 ),
-                submitted_at: format_utc(entry.submitted_at),
+                submitted_at: format_utc(record.submitted_at),
+                entered_at: record.entered_at.map(format_utc),
             })
             .collect()
     }
 
-    pub fn get(&self, id: &str) -> Option<Entry> {
+    pub fn get(&self, id: &str) -> Option<Record> {
         let records = self.records.lock().unwrap();
-        records
+        records.iter().find(|record| record.id == id).cloned()
+    }
+
+    pub fn mark_entered(&self, id: &str) -> bool {
+        self.mark_entered_at(id, OffsetDateTime::now_utc())
+    }
+
+    /// False only when the record has gone — deleted from another look. Marking
+    /// twice keeps the first time, which is when it actually happened.
+    pub fn mark_entered_at(&self, id: &str, now: OffsetDateTime) -> bool {
+        let mut records = self.records.lock().unwrap();
+        let Some(record) = records.iter_mut().find(|record| record.id == id) else {
+            return false;
+        };
+
+        if record.entered_at.is_none() {
+            record.entered_at = Some(now);
+            self.persist(&records);
+            drop(records);
+            self.changed();
+        }
+        true
+    }
+
+    /// The ids actually removed, which is what the caller logs — asking for one
+    /// that has already gone is not an error, it is two looks at the same list.
+    ///
+    /// The file is written before memory is touched, and a write that fails
+    /// takes the whole delete with it. Swallowing it the way `persist` does
+    /// would have the window report a record destroyed while the file still
+    /// holds it, and the next launch would bring that patient back.
+    pub fn delete(&self, ids: &[String]) -> io::Result<Vec<String>> {
+        let mut records = self.records.lock().unwrap();
+        let (removed, kept): (Vec<Record>, Vec<Record>) = records
             .iter()
-            .find(|record| record.entry.id == id)
-            .map(|record| record.entry.clone())
-    }
+            .cloned()
+            .partition(|record| ids.contains(&record.id));
 
-    pub fn remove(&self, id: &str) -> bool {
-        let mut records = self.records.lock().unwrap();
-        let before = records.len();
-        records.retain(|record| record.entry.id != id);
-        let removed = records.len() != before;
-        drop(records);
-
-        if removed {
-            self.changed();
+        if removed.is_empty() {
+            return Ok(Vec::new());
         }
-        removed
-    }
 
-    pub fn sweep(&self, now: OffsetDateTime) -> usize {
-        let mut records = self.records.lock().unwrap();
-        let before = records.len();
-        records.retain(|record| now - record.entry.submitted_at < RETENTION);
-        let dropped = before - records.len();
-        drop(records);
-
-        if dropped > 0 {
-            self.changed();
+        if let Err(e) = self.write(&kept) {
+            error!(error = %e, "delete not written; the records are still held");
+            return Err(e);
         }
-        dropped
+
+        *records = kept;
+        drop(records);
+        self.changed();
+
+        Ok(removed.into_iter().map(|record| record.id).collect())
     }
 }
 
@@ -170,35 +235,42 @@ pub fn list_waiting(state: State<'_, Arc<AppState>>) -> Vec<Summary> {
 
 #[tauri::command]
 pub fn get_submission(state: State<'_, Arc<AppState>>, id: String) -> Option<Submission> {
-    state.queue().get(&id).map(|entry| entry.details)
+    state.queue().get(&id).map(|record| record.details)
 }
 
 #[tauri::command]
 pub fn mark_entered(state: State<'_, Arc<AppState>>, id: String) -> bool {
-    let removed = state.queue().remove(&id);
-    if removed {
+    let marked = state.queue().mark_entered(&id);
+    if marked {
         info!("{id} entered");
     }
-    removed
+    marked
 }
 
-pub fn spawn_sweeper(queue: Arc<Queue>) {
-    tauri::async_runtime::spawn(async move {
-        let mut ticker = tokio::time::interval(SWEEP_INTERVAL);
-        loop {
-            ticker.tick().await;
-            let dropped = queue.sweep(OffsetDateTime::now_utc());
-            if dropped > 0 {
-                tracing::info!(dropped, "dropped expired submissions");
-            }
-        }
-    });
+/// Takes the ids the window offered to delete rather than a rule of its own, so
+/// what staff were shown and what is destroyed cannot drift apart between the
+/// prompt appearing and the button being pressed.
+///
+/// An error rejects the call rather than returning a count, so the window can
+/// tell staff the records are still here instead of closing on a delete that
+/// never reached the disk.
+#[tauri::command]
+pub fn delete_submissions(
+    state: State<'_, Arc<AppState>>,
+    ids: Vec<String>,
+) -> Result<usize, String> {
+    let removed = state.queue().delete(&ids).map_err(|e| e.to_string())?;
+    for id in &removed {
+        info!("{id} deleted");
+    }
+    Ok(removed.len())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use time::Duration;
     use time::macros::datetime;
 
     fn submission(first_name: &str, last_name: &str) -> Submission {
@@ -228,6 +300,7 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, id);
         assert_eq!(listed[0].name, "Jane Doe");
+        assert_eq!(listed[0].entered_at, None);
         assert_eq!(queue.get(&id).unwrap().details.first_name, "Jane");
     }
 
@@ -299,6 +372,81 @@ mod tests {
         assert_eq!(queue.list().len(), 2);
     }
 
+    /// The whole point of dropping the sweeper: age alone never removes a
+    /// patient, only a staff member does.
+    #[test]
+    fn age_alone_never_removes_a_record() {
+        let queue = Queue::new();
+        let submitted = datetime!(2026-08-13 14:12:04 UTC);
+        let id = queue.add_at(submission("Jane", "Doe"), None, submitted);
+
+        assert_eq!(queue.list().len(), 1);
+        assert!(queue.get(&id).is_some());
+    }
+
+    #[test]
+    fn marking_entered_keeps_the_record_and_stamps_it() {
+        let queue = Queue::new();
+        let submitted = datetime!(2026-08-13 14:12:04 UTC);
+        let id = queue.add_at(submission("Jane", "Doe"), None, submitted);
+
+        assert!(queue.mark_entered_at(&id, submitted + Duration::minutes(8)));
+
+        let listed = queue.list();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            listed[0].entered_at.as_deref(),
+            Some("2026-08-13T14:20:04Z")
+        );
+    }
+
+    #[test]
+    fn marking_entered_twice_keeps_the_first_time() {
+        let queue = Queue::new();
+        let submitted = datetime!(2026-08-13 14:12:04 UTC);
+        let id = queue.add_at(submission("Jane", "Doe"), None, submitted);
+
+        queue.mark_entered_at(&id, submitted + Duration::minutes(8));
+        assert!(queue.mark_entered_at(&id, submitted + Duration::minutes(30)));
+
+        assert_eq!(
+            queue.list()[0].entered_at.as_deref(),
+            Some("2026-08-13T14:20:04Z")
+        );
+    }
+
+    #[test]
+    fn marking_entered_reports_a_record_that_has_already_been_deleted() {
+        let queue = Queue::new();
+        let id = queue.add(submission("Jane", "Doe"), None);
+        queue.delete(std::slice::from_ref(&id)).unwrap();
+
+        assert!(!queue.mark_entered(&id));
+    }
+
+    #[test]
+    fn deleting_is_what_takes_a_record_out() {
+        let queue = Queue::new();
+        let id = queue.add(submission("Jane", "Doe"), None);
+
+        assert_eq!(
+            queue.delete(std::slice::from_ref(&id)).unwrap(),
+            vec![id.clone()]
+        );
+        assert!(queue.get(&id).is_none());
+        assert!(queue.list().is_empty());
+    }
+
+    #[test]
+    fn deleting_reports_only_the_records_that_were_there() {
+        let queue = Queue::new();
+        let id = queue.add(submission("Jane", "Doe"), None);
+
+        let removed = queue.delete(&[id.clone(), "ffff".to_string()]).unwrap();
+        assert_eq!(removed, vec![id]);
+        assert!(queue.delete(&["ffff".to_string()]).unwrap().is_empty());
+    }
+
     #[test]
     fn only_a_real_change_is_announced() {
         let queue = Queue::new();
@@ -313,57 +461,38 @@ mod tests {
         queue.add_at(submission("Jane", "Doe"), Some("abc"), submitted);
         assert_eq!(changes.load(Ordering::Relaxed), 1);
 
-        assert!(queue.remove(&id));
-        assert!(!queue.remove(&id));
+        queue.mark_entered_at(&id, submitted + Duration::minutes(8));
+        queue.mark_entered_at(&id, submitted + Duration::minutes(9));
         assert_eq!(changes.load(Ordering::Relaxed), 2);
 
-        queue.add_at(submission("John", "Roe"), None, submitted);
-        queue.sweep(submitted + Duration::hours(3));
-        queue.sweep(submitted + Duration::hours(3));
-        assert_eq!(changes.load(Ordering::Relaxed), 4);
+        assert!(!queue.delete(std::slice::from_ref(&id)).unwrap().is_empty());
+        assert!(queue.delete(&[id]).unwrap().is_empty());
+        assert_eq!(changes.load(Ordering::Relaxed), 3);
     }
 
+    /// The point of writing the file before memory: a record the window said
+    /// was destroyed must not be waiting at the next launch.
     #[test]
-    fn removing_takes_the_entry_out_and_only_works_once() {
-        let queue = Queue::new();
+    fn a_deleted_record_is_gone_after_a_restart() {
+        let dir = crate::store::tests::temp_dir();
+        let queue = Queue::restored(Store::new(&dir).unwrap()).unwrap();
         let id = queue.add(submission("Jane", "Doe"), None);
+        queue.delete(std::slice::from_ref(&id)).unwrap();
 
-        assert!(queue.remove(&id));
-        assert!(!queue.remove(&id));
-        assert!(queue.get(&id).is_none());
-        assert!(queue.list().is_empty());
+        let reopened = Queue::restored(Store::new(&dir).unwrap()).unwrap();
+        assert!(reopened.list().is_empty());
     }
 
+    /// A tablet retrying across a restart must not create a second patient.
     #[test]
-    fn an_entry_older_than_two_hours_is_swept() {
-        let queue = Queue::new();
-        let submitted = datetime!(2026-08-13 14:12:04 UTC);
-        let aged = queue.add_at(submission("Jane", "Doe"), None, submitted);
-        let fresh = queue.add_at(
-            submission("John", "Roe"),
-            None,
-            submitted + Duration::minutes(90),
-        );
+    fn a_key_survives_a_restart_with_its_record() {
+        let dir = crate::store::tests::temp_dir();
+        let id = Queue::restored(Store::new(&dir).unwrap())
+            .unwrap()
+            .add(submission("Jane", "Doe"), Some("abc"));
 
-        assert_eq!(queue.sweep(submitted + Duration::hours(2)), 1);
-        assert!(queue.get(&aged).is_none());
-        assert!(queue.get(&fresh).is_some());
-    }
-
-    #[test]
-    fn a_swept_entrys_idempotency_key_stops_being_honoured() {
-        let queue = Queue::new();
-        let submitted = datetime!(2026-08-13 14:12:04 UTC);
-        let first = queue.add_at(submission("Jane", "Doe"), Some("abc"), submitted);
-
-        queue.sweep(submitted + Duration::hours(3));
-        let second = queue.add_at(
-            submission("Jane", "Doe"),
-            Some("abc"),
-            submitted + Duration::hours(3),
-        );
-
-        assert_ne!(first, second);
-        assert_eq!(queue.list().len(), 1);
+        let reopened = Queue::restored(Store::new(&dir).unwrap()).unwrap();
+        assert_eq!(reopened.add(submission("Jane", "Doe"), Some("abc")), id);
+        assert_eq!(reopened.list().len(), 1);
     }
 }

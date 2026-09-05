@@ -6,6 +6,7 @@ mod queue;
 mod routes;
 mod server;
 mod state;
+mod store;
 mod submission;
 
 use std::sync::Arc;
@@ -27,7 +28,8 @@ fn main() {
             net::get_pairing_info,
             queue::list_waiting,
             queue::get_submission,
-            queue::mark_entered
+            queue::mark_entered,
+            queue::delete_submissions
         ])
         .setup(|app| {
             if let Err(e) = init(app) {
@@ -54,12 +56,12 @@ fn init(app: &mut tauri::App) -> Result<(), SetupError> {
     app.manage(guard);
 
     let token = auth::load_or_create(&app.path().app_config_dir()?)?;
-    let state = AppState::new(token);
+    let store = store::Store::new(&app.path().app_local_data_dir()?)?;
+    let state = AppState::restored(token, store)?;
     let address = net::detect();
     state.set_address(address);
     let port = server::start(&state)?;
     info!(?address, port, "started");
-    queue::spawn_sweeper(state.queue().clone());
     let handle = app.handle().clone();
     state.queue().set_on_change(move || {
         let _ = handle.emit(queue::QUEUE_CHANGED, ());

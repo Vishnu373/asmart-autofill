@@ -5,6 +5,7 @@ fn main() {
             "list_waiting",
             "get_submission",
             "mark_entered",
+            "delete_submissions",
         ]),
     ))
     .expect("failed to run tauri-build");

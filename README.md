@@ -1,6 +1,6 @@
 # asmart-autofill
 
-A patient fills in a form on a tablet. The details land on the front desk computer, where staff copy them into the clinic's EMR without anyone retyping them.
+A patient fills in a form on a tablet. The details land on the front desk computer, where staff copy them into the clinic's EMR without anyone retyping them. Records stay on that computer, encrypted, until a staff member deletes them.
 
 Two parts ship together: a Tauri desktop application that holds the data and serves the form, and a React frontend for the form and the desktop window. The desktop is the source of truth — the tablet is a client of it.
 
@@ -27,7 +27,7 @@ Rust dependencies are fetched on the first build, which takes several minutes an
 bun run dev
 ```
 
-The window opens on launch. Closing it stops the server and drops anything waiting.
+The window opens on launch. Closing it stops the server; records already taken stay on disk and are there on the next launch.
 
 Both `dev` and `build` rebuild the two frontends first, so a change to the form or the window is picked up without a separate step.
 
@@ -57,7 +57,8 @@ src-tauri/                Rust core
   src/main.rs             startup, logging
   src/server.rs           axum router and port binding
   src/routes/tablet.rs    serves the form, takes submissions
-  src/queue.rs            in-memory queue, two-hour retention, the window's commands
+  src/queue.rs            the record queue and the window's commands
+  src/store.rs            the DPAPI-encrypted record file
   src/submission.rs       the patient record and its validation
   src/auth.rs             bearer gate for the tablet
   src/net.rs              LAN address detection and pairing URL

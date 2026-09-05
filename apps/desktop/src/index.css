@@ -5,6 +5,7 @@
   --line: color-mix(in srgb, currentColor 18%, transparent);
   --raised: color-mix(in srgb, currentColor 5%, transparent);
   --accent: #1f6feb;
+  --danger: #b3261e;
 }
 
 body {
@@ -206,7 +207,7 @@ p {
 
 .expired {
   font-size: 0.85rem;
-  color: #b3261e;
+  color: var(--danger);
 }
 
 /* Detail */
@@ -332,4 +333,110 @@ dd {
   border: none;
   border-radius: 0.4rem;
   cursor: pointer;
+}
+
+/* Entered but not yet deleted */
+
+.waiting.kept h2 {
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.waiting.kept li button {
+  background: none;
+  opacity: 0.7;
+}
+
+.entered-note {
+  margin-top: 1rem;
+  padding: 0.6rem 0.85rem;
+  font-size: 0.85rem;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+}
+
+/* Deleting */
+
+.warn {
+  font-size: 0.85rem;
+  color: var(--danger);
+}
+
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--danger);
+  border-radius: 0.5rem;
+}
+
+.delete,
+.cancel {
+  font: inherit;
+  font-size: 0.85rem;
+  color: inherit;
+  padding: 0.4rem 0.75rem;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+.delete {
+  align-self: flex-start;
+  margin-top: 0.75rem;
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.danger {
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fff;
+  padding: 0.4rem 0.75rem;
+  background: var(--danger);
+  border: none;
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+.danger:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+/* The end-of-day prompt */
+
+.prompt-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgb(0 0 0 / 45%);
+}
+
+.prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  width: 100%;
+  max-width: 22rem;
+  padding: 1.25rem;
+  background: Canvas;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
 }
